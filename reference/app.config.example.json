@@ -1,0 +1,10 @@
+{
+  "profileId": "personal",
+  "timezone": "Asia/Shanghai",
+  "schedule": {"morning":"07:45","cutoff":"08:00","buildDeadline":"08:25","send":"08:30","close":"09:00"},
+  "limits": {"maxSources":20,"maxPages":3,"pageSize":30,"maxNewBodiesPerRun":20,"fetchTimeoutMs":15000,"llmTimeoutMs":60000,"maxResponseBytes":2097152,"maxBodyBytes":131072,"maxModelCharsPerArticle":12000,"maxCandidates":200,"maxDeepRead":20,"maxEvents":10,"perInstanceConcurrency":2,"maxAttemptsPerStage":3,"maxRepairAttempts":1},
+  "editorial": {"targetMinChars":800,"targetMaxChars":1200,"historyDays":30,"lateHours":72,"initialHours":48,"threshold":60},
+  "llm": {"baseUrl":"https://llm.example.invalid/v1","model":"deployment-selected-model","promptVersion":"digest-v1","jsonMode":"none","maxOutputTokens":2500,"tokenizer":"conservative_utf8","inputMicrousdPerMillionTokens":null,"outputMicrousdPerMillionTokens":null,"pricingIncludesAllBillableTokens":false},
+  "budget": {"dayMicrousd":750000,"monthMicrousd":15000000},
+  "delivery": {"channel":"dummy","destinationConfigRef":"personal-primary"}
+}

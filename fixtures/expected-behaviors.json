@@ -1,0 +1,10 @@
+{
+  "notice":"Synthetic fixtures only; not actual news or a guarantee of live-model output.",
+  "feedItems":3,
+  "canonicalReleaseUrl":"https://example.com/releases/widget-2",
+  "maxReleaseEventsAfterMerge":1,
+  "excludedExternalKeys":["hiring"],
+  "forbiddenClaims":["independently verified speedup","guaranteed delivery"],
+  "sendEnabled":false,
+  "expectedProviderCalls":0
+}

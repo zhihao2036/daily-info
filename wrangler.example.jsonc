@@ -1,0 +1,326 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daily-info-production",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-21",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "browser": {
+    "binding": "BROWSER"
+  },
+  "vars": {
+    "APP_ENV": "production",
+    "SEND_ENABLED": "false",
+    "APP_CONFIG": {
+      "profileId": "personal",
+      "timezone": "Asia/Shanghai",
+      "schedule": {
+        "morning": "07:45",
+        "cutoff": "08:00",
+        "buildDeadline": "08:25",
+        "send": "08:30",
+        "close": "09:00"
+      },
+      "limits": {
+        "maxSources": 20,
+        "maxPages": 1,
+        "pageSize": 10,
+        "maxNewBodiesPerRun": 5,
+        "fetchTimeoutMs": 15000,
+        "llmTimeoutMs": 60000,
+        "maxResponseBytes": 2097152,
+        "maxBodyBytes": 131072,
+        "maxModelCharsPerArticle": 12000,
+        "maxCandidates": 60,
+        "maxDeepRead": 10,
+        "maxEvents": 10,
+        "perInstanceConcurrency": 2,
+        "maxAttemptsPerStage": 3,
+        "maxRepairAttempts": 1
+      },
+      "editorial": {
+        "targetMinChars": 800,
+        "targetMaxChars": 1200,
+        "historyDays": 30,
+        "lateHours": 72,
+        "initialHours": 24,
+        "threshold": 60
+      },
+      "llm": {
+        "baseUrl": "https://llm.example.invalid/v1",
+        "model": "deployment-selected-model",
+        "promptVersion": "digest-v1",
+        "jsonMode": "none",
+        "maxOutputTokens": 2500,
+        "tokenizer": "conservative_utf8",
+        "inputMicrousdPerMillionTokens": null,
+        "outputMicrousdPerMillionTokens": null,
+        "pricingIncludesAllBillableTokens": false
+      },
+      "budget": {
+        "dayMicrousd": 0,
+        "monthMicrousd": 0
+      },
+      "delivery": {
+        "channel": "dummy",
+        "destinationConfigRef": "personal-primary"
+      }
+    },
+    "SOURCES_CONFIG": {
+      "schemaVersion": 1,
+      "defaults": {
+        "kind": "rss",
+        "enabled": false,
+        "core": false,
+        "priority": 85,
+        "authority": "official",
+        "intervalHours": 6,
+        "verification": "discovered",
+        "browserFallbackEnabled": false
+      },
+      "sources": [
+        {
+          "core": true,
+          "priority": 80,
+          "authority": "community",
+          "intervalHours": 2,
+          "id": "huggingface-blog",
+          "name": "Hugging Face Blog",
+          "url": "https://huggingface.co/blog/feed.xml",
+          "allowedHosts": [
+            "huggingface.co"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".blog-content"
+          }
+        },
+        {
+          "core": true,
+          "priority": 70,
+          "authority": "community",
+          "intervalHours": 2,
+          "id": "techcrunch-ai",
+          "name": "TechCrunch AI",
+          "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+          "allowedHosts": [
+            "techcrunch.com"
+          ]
+        },
+        {
+          "priority": 70,
+          "authority": "community",
+          "intervalHours": 2,
+          "id": "the-verge-ai",
+          "name": "The Verge AI",
+          "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+          "allowedHosts": [
+            "www.theverge.com",
+            "theverge.com"
+          ]
+        },
+        {
+          "kind": "html_list",
+          "core": true,
+          "priority": 95,
+          "browserFallbackEnabled": true,
+          "id": "anthropic-news",
+          "name": "Anthropic News",
+          "url": "https://www.anthropic.com/news",
+          "allowedHosts": [
+            "www.anthropic.com",
+            "anthropic.com"
+          ],
+          "html": {
+            "listLinkSelector": "main a[href^=\"/news/\"]",
+            "articleSelector": "article"
+          }
+        },
+        {
+          "kind": "html_list",
+          "core": true,
+          "priority": 95,
+          "browserFallbackEnabled": true,
+          "id": "deepseek-news",
+          "name": "DeepSeek News",
+          "url": "https://api-docs.deepseek.com/news/news260910/",
+          "allowedHosts": [
+            "api-docs.deepseek.com"
+          ],
+          "html": {
+            "listLinkSelector": ".menu__link[href^=\"/news/news\"]",
+            "articleSelector": "article"
+          }
+        },
+        {
+          "core": true,
+          "priority": 95,
+          "browserFallbackEnabled": true,
+          "id": "google-gemini",
+          "name": "Google Gemini Models RSS",
+          "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/",
+          "allowedHosts": [
+            "blog.google"
+          ],
+          "html": {
+            "listLinkSelector": "main a[href*=\"/gemini-models/\"]",
+            "articleSelector": "article"
+          }
+        },
+        {
+          "core": true,
+          "priority": 100,
+          "intervalHours": 2,
+          "browserFallbackEnabled": true,
+          "id": "openai-news-rss",
+          "name": "OpenAI News RSS",
+          "url": "https://openai.com/news/rss.xml",
+          "allowedHosts": [
+            "openai.com"
+          ]
+        },
+        {
+          "id": "microsoft-research",
+          "name": "Microsoft Research",
+          "url": "https://www.microsoft.com/en-us/research/feed/",
+          "allowedHosts": [
+            "www.microsoft.com"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".entry-content"
+          }
+        },
+        {
+          "id": "nvidia-blog",
+          "name": "NVIDIA Blog",
+          "url": "https://blogs.nvidia.com/feed/",
+          "allowedHosts": [
+            "blogs.nvidia.com"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".entry-content"
+          }
+        },
+        {
+          "id": "langchain-blog",
+          "name": "LangChain Blog",
+          "url": "https://www.langchain.com/blog/rss.xml",
+          "allowedHosts": [
+            "www.langchain.com",
+            "blog.langchain.com",
+            "langchain.com"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".text-rich-text-v2-blog-post"
+          }
+        },
+        {
+          "kind": "html_list",
+          "id": "kimi-blog",
+          "name": "Kimi 研究博客",
+          "url": "https://www.kimi.com/en/blog/",
+          "allowedHosts": [
+            "www.kimi.com",
+            "kimi.com",
+            "www.kimi.ai",
+            "kimi.ai"
+          ],
+          "html": {
+            "listLinkSelector": "main a[href^=\"/en/blog/\"]",
+            "articleSelector": "main .markdown"
+          }
+        },
+        {
+          "kind": "html_list",
+          "id": "zhipu-news",
+          "name": "智谱资讯",
+          "url": "https://www.zhipuai.cn/zh/news",
+          "allowedHosts": [
+            "www.zhipuai.cn"
+          ],
+          "html": {
+            "listLinkSelector": "main a[href^=\"/zh/news/\"]",
+            "articleSelector": "article .prose"
+          }
+        },
+        {
+          "id": "langgraph-releases",
+          "name": "LangGraph Releases",
+          "url": "https://github.com/langchain-ai/langgraph/releases.atom",
+          "allowedHosts": [
+            "api.github.com",
+            "github.com"
+          ]
+        },
+        {
+          "priority": 70,
+          "authority": "community",
+          "id": "geekpark",
+          "name": "极客公园",
+          "url": "https://www.geekpark.net/rss",
+          "allowedHosts": [
+            "www.geekpark.net",
+            "geekpark.net"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".article-content, .articleContent, article"
+          },
+          "upgradeHttpLinks": true
+        },
+        {
+          "priority": 70,
+          "authority": "community",
+          "id": "infoq-china",
+          "name": "InfoQ 中文",
+          "url": "https://www.infoq.cn/feed",
+          "allowedHosts": [
+            "www.infoq.cn",
+            "infoq.cn"
+          ],
+          "html": {
+            "listLinkSelector": "a",
+            "articleSelector": ".article-content, article"
+          }
+        },
+        {
+          "id": "qwen-code-releases",
+          "name": "Qwen Code Releases",
+          "url": "https://github.com/QwenLM/qwen-code/releases.atom",
+          "allowedHosts": [
+            "api.github.com",
+            "github.com"
+          ]
+        }
+      ]
+    }
+  },
+  "triggers": {
+    "crons": []
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "daily-info-production",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "COLLECT_WORKFLOW",
+      "name": "daily-info-collect",
+      "class_name": "CollectSourceWorkflow"
+    },
+    {
+      "binding": "DAILY_WORKFLOW",
+      "name": "daily-info-daily",
+      "class_name": "DailyDigestWorkflow"
+    }
+  ]
+}

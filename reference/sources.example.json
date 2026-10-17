@@ -1,0 +1,478 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "openai-news-rss",
+      "name": "OpenAI News RSS",
+      "kind": "rss",
+      "url": "https://openai.com/news/rss.xml",
+      "enabled": false,
+      "core": true,
+      "priority": 100,
+      "allowedHosts": [
+        "openai.com"
+      ],
+      "intervalHours": 1,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "authority": "official"
+    },
+    {
+      "id": "anthropic-engineering",
+      "name": "Anthropic Engineering",
+      "kind": "html_list",
+      "url": "https://www.anthropic.com/engineering",
+      "enabled": false,
+      "core": true,
+      "priority": 100,
+      "allowedHosts": [
+        "www.anthropic.com",
+        "anthropic.com"
+      ],
+      "intervalHours": 1,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "html": {
+        "listLinkSelector": "main a[href]",
+        "articleSelector": "main article, main",
+        "dateSelector": "time"
+      },
+      "authority": "official"
+    },
+    {
+      "id": "huggingface-blog",
+      "name": "Hugging Face Blog",
+      "kind": "rss",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "enabled": false,
+      "core": false,
+      "priority": 80,
+      "allowedHosts": [
+        "huggingface.co"
+      ],
+      "intervalHours": 2,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "authority": "community"
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "langchain-blog",
+      "name": "LangChain Blog",
+      "kind": "rss",
+      "url": "https://www.langchain.com/blog/rss.xml",
+      "allowedHosts": [
+        "www.langchain.com",
+        "blog.langchain.com",
+        "langchain.com"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".text-rich-text-v2-blog-post"
+      }
+    },
+    {
+      "id": "techcrunch-ai",
+      "name": "TechCrunch AI",
+      "kind": "rss",
+      "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "allowedHosts": [
+        "techcrunch.com"
+      ],
+      "intervalHours": 2,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "authority": "community"
+    },
+    {
+      "id": "the-verge-ai",
+      "name": "The Verge AI",
+      "kind": "rss",
+      "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "allowedHosts": [
+        "www.theverge.com",
+        "theverge.com"
+      ],
+      "intervalHours": 2,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "authority": "community"
+    },
+    {
+      "id": "github-langgraph-releases",
+      "name": "LangGraph Releases",
+      "kind": "github_releases",
+      "url": "https://api.github.com/repos/langchain-ai/langgraph/releases",
+      "enabled": false,
+      "core": true,
+      "priority": 95,
+      "allowedHosts": [
+        "api.github.com",
+        "github.com"
+      ],
+      "intervalHours": 1,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "github": {
+        "owner": "langchain-ai",
+        "repo": "langgraph",
+        "includePrerelease": false
+      },
+      "authority": "official"
+    },
+    {
+      "id": "github-deepagents-releases",
+      "name": "Deep Agents Releases",
+      "kind": "github_releases",
+      "url": "https://api.github.com/repos/langchain-ai/deepagents/releases",
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "allowedHosts": [
+        "api.github.com",
+        "github.com"
+      ],
+      "intervalHours": 1,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "github": {
+        "owner": "langchain-ai",
+        "repo": "deepagents",
+        "includePrerelease": false
+      },
+      "authority": "official"
+    },
+    {
+      "id": "github-vercel-ai-releases",
+      "name": "Vercel AI SDK Releases",
+      "kind": "github_releases",
+      "url": "https://api.github.com/repos/vercel/ai/releases",
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "allowedHosts": [
+        "api.github.com",
+        "github.com"
+      ],
+      "intervalHours": 1,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "github": {
+        "owner": "vercel",
+        "repo": "ai",
+        "includePrerelease": false
+      },
+      "authority": "official"
+    },
+    {
+      "id": "anthropic-news",
+      "name": "Anthropic News",
+      "url": "https://www.anthropic.com/news",
+      "allowedHosts": [
+        "www.anthropic.com",
+        "anthropic.com"
+      ],
+      "html": {
+        "listLinkSelector": "main a[href^=\"/news/\"]",
+        "articleSelector": "article"
+      },
+      "kind": "html_list",
+      "enabled": false,
+      "core": true,
+      "priority": 95,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false
+    },
+    {
+      "id": "openai-news-html",
+      "name": "OpenAI News",
+      "url": "https://openai.com/news/",
+      "allowedHosts": [
+        "openai.com"
+      ],
+      "html": {
+        "listLinkSelector": "main a[href^=\"/index/\"]",
+        "articleSelector": "main"
+      },
+      "kind": "html_list",
+      "enabled": false,
+      "core": true,
+      "priority": 100,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false
+    },
+    {
+      "id": "deepseek-news",
+      "name": "DeepSeek News",
+      "url": "https://api-docs.deepseek.com/news/news260910/",
+      "allowedHosts": [
+        "api-docs.deepseek.com"
+      ],
+      "html": {
+        "listLinkSelector": ".menu__link[href^=\"/news/news\"]",
+        "articleSelector": "article"
+      },
+      "kind": "html_list",
+      "enabled": false,
+      "core": true,
+      "priority": 95,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false
+    },
+    {
+      "id": "google-gemini",
+      "name": "Google Gemini Models RSS",
+      "url": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/rss/",
+      "allowedHosts": [
+        "blog.google"
+      ],
+      "html": {
+        "listLinkSelector": "main a[href*=\"/gemini-models/\"]",
+        "articleSelector": "article"
+      },
+      "kind": "rss",
+      "enabled": false,
+      "core": true,
+      "priority": 95,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "authority": "community",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "qbitai",
+      "name": "量子位",
+      "kind": "rss",
+      "url": "https://www.qbitai.com/feed",
+      "allowedHosts": [
+        "www.qbitai.com",
+        "qbitai.com"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".article"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "microsoft-research",
+      "name": "Microsoft Research",
+      "kind": "rss",
+      "url": "https://www.microsoft.com/en-us/research/feed/",
+      "allowedHosts": [
+        "www.microsoft.com"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".entry-content"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "nvidia-blog",
+      "name": "NVIDIA Blog",
+      "kind": "rss",
+      "url": "https://blogs.nvidia.com/feed/",
+      "allowedHosts": [
+        "blogs.nvidia.com"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".entry-content"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "kimi-blog",
+      "name": "Kimi 研究博客",
+      "kind": "html_list",
+      "url": "https://www.kimi.com/en/blog/",
+      "allowedHosts": [
+        "www.kimi.com",
+        "kimi.com",
+        "www.kimi.ai",
+        "kimi.ai"
+      ],
+      "html": {
+        "listLinkSelector": "main a[href^=\"/en/blog/\"]",
+        "articleSelector": "main .markdown"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "zhipu-news",
+      "name": "智谱资讯",
+      "kind": "html_list",
+      "url": "https://www.zhipuai.cn/zh/news",
+      "allowedHosts": [
+        "www.zhipuai.cn"
+      ],
+      "html": {
+        "listLinkSelector": "main a[href^=\"/zh/news/\"]",
+        "articleSelector": "article .prose"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "qwen-research",
+      "name": "Qwen Research",
+      "kind": "html_list",
+      "url": "https://qwen.ai/research",
+      "allowedHosts": [
+        "qwen.ai"
+      ],
+      "html": {
+        "listLinkSelector": "a[href*=\"/research/\"]",
+        "articleSelector": "main"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "langgraph-releases",
+      "name": "LangGraph Releases",
+      "kind": "rss",
+      "url": "https://github.com/langchain-ai/langgraph/releases.atom",
+      "allowedHosts": [
+        "api.github.com",
+        "github.com"
+      ]
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "authority": "community",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "geekpark",
+      "name": "极客公园",
+      "kind": "rss",
+      "url": "https://www.geekpark.net/rss",
+      "allowedHosts": [
+        "www.geekpark.net",
+        "geekpark.net"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".article-content, .articleContent, article"
+      },
+      "upgradeHttpLinks": true
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "authority": "community",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "infoq-china",
+      "name": "InfoQ 中文",
+      "kind": "rss",
+      "url": "https://www.infoq.cn/feed",
+      "allowedHosts": [
+        "www.infoq.cn",
+        "infoq.cn"
+      ],
+      "html": {
+        "listLinkSelector": "a",
+        "articleSelector": ".article-content, article"
+      }
+    },
+    {
+      "enabled": false,
+      "core": false,
+      "priority": 85,
+      "authority": "official",
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false,
+      "id": "qwen-code-releases",
+      "name": "Qwen Code Releases",
+      "kind": "rss",
+      "url": "https://github.com/QwenLM/qwen-code/releases.atom",
+      "allowedHosts": [
+        "api.github.com",
+        "github.com"
+      ]
+    },
+    {
+      "id": "jiqizhixin",
+      "name": "机器之心",
+      "kind": "rss",
+      "url": "https://www.jiqizhixin.com/rss",
+      "enabled": false,
+      "core": false,
+      "priority": 70,
+      "authority": "community",
+      "allowedHosts": [
+        "www.jiqizhixin.com"
+      ],
+      "intervalHours": 6,
+      "verification": "discovered",
+      "browserFallbackEnabled": false
+    }
+  ]
+}

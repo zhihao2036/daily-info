@@ -1,0 +1,41 @@
+{
+  "name": "daily-info",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=22.17",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.production.jsonc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "doctor": "node --experimental-strip-types scripts/doctor.ts",
+    "preview": "node --env-file-if-exists=.env --experimental-strip-types scripts/preview.ts",
+    "deploy:production": "node --env-file-if-exists=.env --experimental-strip-types scripts/deploy-checked.ts production",
+    "deploy:checked": "node --env-file-if-exists=.env --experimental-strip-types scripts/deploy-checked.ts",
+    "db:migrate:local": "node --experimental-strip-types scripts/migrate-local.ts",
+    "db:migrate:production": "wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc",
+    "configure": "node --experimental-strip-types scripts/configure.ts",
+    "check:public": "node --experimental-strip-types scripts/check-public.ts",
+    "check:references": "python3 validation/check_references.py",
+    "prepare:public": "node --experimental-strip-types scripts/prepare-public.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.13",
+    "@cloudflare/workers-types": "^5.20260920.1",
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.135.0"
+  },
+  "description": "Self-hosted AI and Agent news digests on Cloudflare Workers, Workflows and D1",
+  "license": "MIT"
+}

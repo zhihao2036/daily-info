@@ -1,0 +1,2 @@
+# Local wrangler dev only. Never put real production secrets in this example.
+ADMIN_TOKEN=REPLACE_WITH_RANDOM_ADMIN_TOKEN

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel>
+<title>Synthetic fixture — not real news</title><link>https://example.com/</link><description>Test data only.</description>
+<item><guid>widget-2-release</guid><title>Acme Widget 2.0 released</title><link>https://example.com/releases/widget-2?utm_source=test</link><pubDate>Sun, 20 Sep 2026 18:00:00 GMT</pubDate><description>Widget 2.0 adds resumable tasks. Acme reports results from its own test harness.</description></item>
+<item><guid>widget-2-blog</guid><title>Introducing resumable tasks in Widget 2.0</title><link>https://example.com/blog/widget-2</link><pubDate>Sun, 20 Sep 2026 18:10:00 GMT</pubDate><description>Widget 2.0 adds resumable tasks. This article describes the same release.</description></item>
+<item><guid>hiring</guid><title>Join our recruitment event</title><link>https://example.com/events/hiring</link><description>A recruitment advertisement. No product changes.</description></item>
+</channel></rss>

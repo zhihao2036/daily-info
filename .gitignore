@@ -1,0 +1,17 @@
+node_modules/
+.pnpm-store/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env
+.env.*
+!.env.example
+.private/
+wrangler.production.jsonc
+wrangler.*.local.jsonc
+.superpowers/
+coverage/
+dist/
+*.bundle
+.DS_Store
