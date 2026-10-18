@@ -14,7 +14,7 @@
 - 09:00 后未发送：旧日报过期，内容由后续窗口按规则处理。
 - D1 恢复：先停 Cron 和发送，导出并核对投递回执；不把历史 sent 当作待发送任务重放。
 - chat ID 或渠道变化：更改 destinationConfigRef，旧 outbox 不能改投新目标；核对 CONFIG_CHANGED 结果。
-- Telegram 含主题超过 4096 字符时会拒绝发送，当前不拆分多条消息。调小事件数或让模型生成更短内容后，先做无发送预览验收。
+- Telegram 每条新闻一条文字消息，最多 10 条，每条不超过 4096 个 UTF-16 单元；不发送附件。单项过长会精简展示，完整报告仍保存在 D1。telegram_messages 保存逐条投递回执，重试跳过已成功的前序消息；未知结果不自动重发。消息间隔至少约 1 秒，正常发送完 10 条约需十余秒。部署前应用全部 D1 migrations。
 - 模型使用账本预算上界管理；usage 缺失或调用结果不明可能以 uncertain 占用保守预算，不能当作发票金额。
 
 诊断顺序为受保护 status/sources/run/digest API、D1 状态、Workflow steps、Workers 日志及 Telegram 客户端。示例：

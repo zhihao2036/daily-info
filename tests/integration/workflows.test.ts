@@ -3,12 +3,14 @@ import { introspectWorkflowInstance } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DigestRepository } from '../../src/db/repositories/digests';
 import { RunRepository } from '../../src/db/repositories/runs';
+import { sha256 } from '../../src/db/repositories/shared';
 import { dispatchRun } from '../../src/scheduler/dispatch';
 import { reconcile } from '../../src/scheduler/reconcile';
-import { previewTimes } from '../../src/scheduler/time';
+import { digestTimes, previewTimes } from '../../src/scheduler/time';
 import { createApplication, type RuntimeEnv } from '../../src/app';
 import type { DigestParams } from '../../src/domain/contracts';
 import { CollectSourceWorkflow } from '../../src/workflows/collect-source';
+import { DailyDigestWorkflow } from '../../src/workflows/daily-digest';
 
 const tables = [
   'delivery_attempts', 'deliveries', 'digest_events', 'digest_candidates', 'event_versions', 'events',
@@ -244,5 +246,80 @@ describe('durable workflow dispatch and recovery', () => {
     await instance.waitForStatus('complete');
     expect(await instance.getOutput()).toMatchObject({ digestId: digest.id, mode: 'preview' });
     expect((await runs.get(run.runId))?.state).toBe('completed');
+  });
+
+  it('runs a delayed scheduled recovery without sleeping until past timestamps or sending after close', async () => {
+    const now = Date.now();
+    const digests = new DigestRepository(env.DB, { now: () => now });
+    const times = { localDate: '2026-09-21', morningAt: now - 600_000, cutoffAt: now - 300_000,
+      buildDeadlineAt: now - 180_000, sendAt: now - 120_000, sendDeadlineAt: now - 60_000 };
+    const digest = await digests.ensure({ profileId: 'personal', mode: 'scheduled', times, configSnapshot: {}, now });
+    const runs = new RunRepository(env.DB);
+    const run = await runs.register({ jobKey: 'delayed-recovery', kind: 'recovery', sourceId: null,
+      digestId: digest.id, generation: 0, scheduledAt: times.morningAt, deadlineAt: times.sendDeadlineAt, params: {}, now });
+    const sleepUntil = vi.fn(async (_name: string, target: number) => {
+      if (target <= Date.now()) throw new Error('Cannot sleep in the past');
+    });
+    const step = { do: async (...args: unknown[]) => await (args.at(-1) as () => Promise<unknown>)(), sleepUntil };
+    const fetcher = vi.spyOn(globalThis, 'fetch');
+    try {
+      await DailyDigestWorkflow.prototype.run.call({ env } as unknown as DailyDigestWorkflow,
+        { payload: { runId: run.runId, digestId: digest.id, mode: 'scheduled', generation: 0,
+          scheduledAt: times.morningAt, deadlineAt: times.sendDeadlineAt } } as Parameters<DailyDigestWorkflow['run']>[0],
+        step as unknown as Parameters<DailyDigestWorkflow['run']>[1]);
+      expect(sleepUntil).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+      expect((await runs.get(run.runId))?.state).toBe('completed');
+    } finally {
+      fetcher.mockRestore();
+    }
+  });
+
+  it('delivers a next-day digest at 08:30 and does not send it again during recovery', async () => {
+    const times = digestTimes(Date.parse('2026-10-19T07:45:00+08:00'));
+    let current = times.morningAt;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => current);
+    const appConfig = JSON.parse(env.APP_CONFIG as string);
+    appConfig.delivery = { channel: 'telegram', destinationConfigRef: 'next-day-private-chat' };
+    const chatId = '987654321';
+    const destinationKey = await sha256(chatId);
+    const runtime = { ...env, APP_ENV: 'production', SEND_ENABLED: 'true', APP_CONFIG: JSON.stringify(appConfig),
+      TELEGRAM_BOT_TOKEN: '123456:abcdefghijklmnopqrstuvwxyz', TELEGRAM_CHAT_ID: chatId };
+    const digests = new DigestRepository(env.DB, { now: () => current });
+    const digest = await digests.ensure({ profileId: 'personal', mode: 'scheduled', times,
+      configSnapshot: { app: appConfig, sources: [], deliveryDestinationKey: destinationKey }, now: current });
+    const text = `${'日报正文'.repeat(200)}\nhttps://example.com/source`;
+    await digests.commitSnapshot(digest.id, 0, { cards: [] }, text, '<p>report</p>', current);
+    const runs = new RunRepository(env.DB);
+    const run = await runs.register({ jobKey: 'next-day-0830', kind: 'digest', sourceId: null,
+      digestId: digest.id, generation: 0, scheduledAt: times.morningAt, deadlineAt: times.sendDeadlineAt, params: {}, now: current });
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      expect(current).toBe(times.sendAt + 1);
+      expect(String(input)).toMatch(/\/sendMessage$/);
+      expect(JSON.parse(String(init?.body)).text).toContain(text);
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 44 } }));
+    });
+    const sleepUntil = vi.fn(async (_name: string, target: number) => {
+      expect(target).toBeGreaterThan(current);
+      current = target + 1;
+    });
+    const step = { do: async (...args: unknown[]) => await (args.at(-1) as () => Promise<unknown>)(), sleepUntil };
+    try {
+      await DailyDigestWorkflow.prototype.run.call({ env: runtime } as unknown as DailyDigestWorkflow,
+        { payload: { runId: run.runId, digestId: digest.id, mode: 'scheduled', generation: 0,
+          scheduledAt: times.morningAt, deadlineAt: times.sendDeadlineAt } } as Parameters<DailyDigestWorkflow['run']>[0],
+        step as unknown as Parameters<DailyDigestWorkflow['run']>[1]);
+      current = times.sendAt + 5 * 60_000;
+      const app = createApplication(runtime as unknown as RuntimeEnv, () => current);
+      await app.scheduled({ cron: '*/5 * * * *', scheduledTime: current, noRetry() {} } as unknown as ScheduledController);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(await env.DB.prepare('SELECT status,provider_message_id FROM deliveries WHERE digest_id=?1').bind(digest.id).first())
+        .toMatchObject({ status: 'sent', provider_message_id: '44' });
+      expect(await env.DB.prepare('SELECT status,accepted_at FROM digests WHERE id=?1').bind(digest.id).first())
+        .toMatchObject({ status: 'sent', accepted_at: times.sendAt + 1 });
+    } finally {
+      clock.mockRestore();
+      fetcher.mockRestore();
+    }
   });
 });

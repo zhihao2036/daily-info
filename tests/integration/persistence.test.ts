@@ -11,7 +11,7 @@ class FakeClock implements Clock {
 }
 
 const tables = [
-  'browser_fallback_attempts', 'browser_usage_days',
+  'telegram_messages', 'browser_fallback_attempts', 'browser_usage_days',
   'delivery_attempts', 'deliveries', 'digest_events', 'digest_candidates', 'event_versions', 'events',
   'llm_calls', 'budget_buckets', 'request_keys', 'item_versions', 'collection_pages', 'items',
   'source_leases', 'runs', 'digests', 'sources',
@@ -72,7 +72,7 @@ function article(body: string, publishedAt: number | null = Date.parse('2026-09-
 describe('D1 persistence', () => {
   beforeEach(resetDatabase);
 
-  it('runs the real migrations with exactly eighteen application tables', async () => {
+  it('runs the real migrations with all expected application tables', async () => {
     const rows = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name <> 'd1_migrations'").all<{ name: string }>();
     expect(rows.results.map((row) => row.name).sort()).toEqual([...tables].sort());
   });

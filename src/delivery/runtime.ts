@@ -2,8 +2,10 @@ import type { AppConfig, Sender } from '../domain/contracts';
 import { createCloudflareEmailSender } from './cloudflare-email';
 import { createDummySender } from './dummy';
 import { createTelegramSender } from './telegram';
+import { createTelegramOutbox } from './telegram-outbox';
 
 export interface DeliveryRuntimeBindings {
+  DB?: D1Database;
   EMAIL?: unknown;
   EMAIL_FROM?: string;
   EMAIL_TO?: string;
@@ -25,7 +27,8 @@ export function createRuntimeSender(app: AppConfig, bindings: DeliveryRuntimeBin
   if (app.delivery.channel === 'telegram' && bindings.TELEGRAM_BOT_TOKEN !== undefined
     && bindings.TELEGRAM_CHAT_ID !== undefined) {
     return createTelegramSender({ botToken: bindings.TELEGRAM_BOT_TOKEN, chatId: bindings.TELEGRAM_CHAT_ID,
-      destinationConfigRef: app.delivery.destinationConfigRef });
+      destinationConfigRef: app.delivery.destinationConfigRef,
+      ...(bindings.DB ? { outbox: createTelegramOutbox(bindings.DB) } : {}) });
   }
   return createDummySender();
 }

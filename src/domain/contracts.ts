@@ -185,7 +185,7 @@ export interface RunStatus {
   finishedAt: EpochMs | null;
 }
 export interface ApiError { error: { code: string; message: string; requestId: string; retryable: boolean } }
-export interface DeliveryPayload { subject: string; text: string; html: string; destinationConfigRef: string; payloadHash: string }
+export interface DeliveryPayload { subject: string; text: string; html: string; destinationConfigRef: string; payloadHash: string; messages?: string[]; deliveryId?: string }
 export type SendResult =
   | { kind: 'accepted'; providerMessageId: string | null; acceptedAt: EpochMs }
   | { kind: 'rejected'; retryable: boolean; code: string; retryAfterMs?: number }

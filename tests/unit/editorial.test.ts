@@ -168,6 +168,18 @@ describe('editorial invariants', () => {
     expect(rendered.html).not.toContain('<script>');
     expect(rendered.text).toContain('Official RSS：候选 9 条，收录 0 条');
     expect(rendered.text).toContain('未收录不等于采集失败');
+    const two = renderDigest({ ...content, cards: [card, { ...card, title: 'Second news' }] },
+      new Map([['v1', 'https://example.com/source']]));
+    expect(two.telegramMessages).toHaveLength(2);
+    expect(two.telegramMessages[0]).toContain('1/2');
+    expect(two.telegramMessages[0]).not.toContain('Second news');
+    expect(two.telegramMessages[1]).toContain('Second news');
+    expect(two.telegramMessages.every(text => text.includes('https://example.com/source'))).toBe(true);
+    const long = renderDigest({ ...content, cards: [{ ...card, summary: '🚀'.repeat(5000) }] },
+      new Map([['v1', 'https://example.com/source']]));
+    expect(long.telegramMessages[0]!.length).toBeLessThanOrEqual(4096);
+    expect(long.telegramMessages[0]).toContain('https://example.com/source');
+    expect(long.telegramMessages[0]).toContain('…');
   });
 
   it('treats source text as data rather than instructions', () => {

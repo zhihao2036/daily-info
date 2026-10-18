@@ -54,14 +54,11 @@ describe('send adapters', () => {
     expect(JSON.parse(String(requestedInit?.body))).toEqual({ chat_id: '987654321', text: 'Daily\n\nplain' });
   });
 
-  it('rejects an oversized Telegram message before any external request', async () => {
+  it('rejects an oversized unstructured message without sending an attachment', async () => {
     const fetcher = vi.fn<typeof fetch>();
-    const sender = createTelegramSender({
-      botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
-      destinationConfigRef: 'personal-primary', fetcher,
-    });
-
-    await expect(sender.send({ ...payload, text: '界'.repeat(4096) }, 'attempt', new AbortController().signal))
+    const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+      destinationConfigRef: 'personal-primary', fetcher });
+    await expect(sender.send({ ...payload, text: '界'.repeat(4246) }, 'attempt', new AbortController().signal))
       .resolves.toEqual({ kind: 'rejected', retryable: false, code: 'TELEGRAM_MESSAGE_TOO_LONG' });
     expect(fetcher).not.toHaveBeenCalled();
   });
@@ -81,6 +78,31 @@ describe('send adapters', () => {
     });
     await expect(ambiguous.send(payload, 'attempt', new AbortController().signal))
       .resolves.toEqual({ kind: 'uncertain', code: 'TELEGRAM_RESPONSE_UNKNOWN' });
+  });
+
+  it('keeps per-item throttling retryable and ambiguous sends uncertain without another request', async () => {
+    const longPayload = { ...payload, messages: ['界'.repeat(3000)] };
+    for (const ambiguous of [false, true]) {
+      const fetcher = vi.fn<typeof fetch>(async () => {
+        if (ambiguous) throw new Error('connection reset');
+        return new Response(JSON.stringify({ parameters: { retry_after: 7 } }), { status: 429 });
+      });
+      const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+        destinationConfigRef: 'personal-primary', fetcher });
+      expect(await sender.send(longPayload, 'attempt', new AbortController().signal)).toEqual(ambiguous
+        ? { kind: 'uncertain', code: 'TELEGRAM_RESPONSE_UNKNOWN' }
+        : { kind: 'rejected', retryable: true, code: 'TELEGRAM_HTTP_429', retryAfterMs: 7000 });
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('validates every item before making the first request', async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+      destinationConfigRef: 'personal-primary', fetcher });
+    await expect(sender.send({ ...payload, messages: ['first item', '界'.repeat(4097)] }, 'attempt', new AbortController().signal))
+      .resolves.toEqual({ kind: 'rejected', retryable: false, code: 'TELEGRAM_MESSAGE_TOO_LONG' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('keeps the Telegram timeout active while reading the response body', async () => {
@@ -116,15 +138,16 @@ describe('send adapters', () => {
     },
   );
 
-  it('accepts exactly 4096 Unicode code points and retries an explicit 5xx response', async () => {
-    const acceptedFetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200 }));
+  it('accepts exactly 4096 UTF-16 units and retries an explicit 5xx response', async () => {
+    const acceptedFetch = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200 }));
     const accepted = createTelegramSender({
       botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
       destinationConfigRef: 'personal-primary', fetcher: acceptedFetch,
     });
-    await expect(accepted.send({ ...payload, subject: 'D', text: '🚀'.repeat(4093) }, 'attempt', new AbortController().signal))
+    await expect(accepted.send({ ...payload, subject: 'D', text: `${'🚀'.repeat(2046)}x` }, 'attempt', new AbortController().signal))
       .resolves.toMatchObject({ kind: 'accepted', providerMessageId: '7' });
     expect(acceptedFetch).toHaveBeenCalledTimes(1);
+    expect(String(acceptedFetch.mock.calls[0]?.[0])).toMatch(/\/sendMessage$/);
 
     const unavailable = createTelegramSender({
       botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',

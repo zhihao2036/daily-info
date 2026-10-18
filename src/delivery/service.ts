@@ -1,6 +1,7 @@
 import { DeliveryRepository } from '../db/repositories/delivery';
 import { sha256 } from '../db/repositories/shared';
-import type { Clock, DeliveryPayload, SendResult, Sender } from '../domain/contracts';
+import type { Clock, DeliveryPayload, DigestContent, SendResult, Sender } from '../domain/contracts';
+import { renderDigest } from '../editorial/render';
 
 export interface DeliveryDependencies {
   db: D1Database;
@@ -16,12 +17,12 @@ export interface DeliveryDependencies {
 interface DigestRow {
   id: string; mode: 'scheduled' | 'preview'; status: string; build_generation: number;
   local_date: string; send_at: number; send_deadline_at: number; rendered_text: string | null;
-  rendered_html: string | null; content_hash: string | null;
+  rendered_html: string | null; content_hash: string | null; content_json: string | null;
 }
 
 async function readDigest(db: D1Database, digestId: string): Promise<DigestRow> {
   const row = await db.prepare(`SELECT id,mode,status,build_generation,local_date,send_at,send_deadline_at,
-    rendered_text,rendered_html,content_hash FROM digests WHERE id=?1`).bind(digestId).first<DigestRow>();
+    rendered_text,rendered_html,content_hash,content_json FROM digests WHERE id=?1`).bind(digestId).first<DigestRow>();
   if (row === null) throw new Error('DIGEST_NOT_FOUND');
   return row;
 }
@@ -50,6 +51,17 @@ export async function deliverDigest(digestId: string, generation: number, depend
     return { kind: 'suppressed', reason: 'config_changed' };
   }
   if (current === null) {
+    if (reason === null && dependencies.channel === 'telegram' && row.content_json !== null) {
+      const content = JSON.parse(row.content_json) as Partial<DigestContent>;
+      if (Array.isArray(content.cards) && typeof content.localDate === 'string') {
+        const versions = await dependencies.db.prepare(`SELECT v.id,v.canonical_url,v.published_at FROM digest_candidates c
+          JOIN item_versions v ON v.id=c.item_version_id WHERE c.digest_id=?1`).bind(digestId)
+          .all<{ id: string; canonical_url: string; published_at: number | null }>();
+        payload.messages = renderDigest(content as DigestContent,
+          new Map(versions.results.map(v => [v.id, v.canonical_url])),
+          new Map(versions.results.map(v => [v.id, v.published_at]))).telegramMessages;
+      }
+    }
     current = await repository.ensure({ digestId, channel: dependencies.channel, destinationKey: dependencies.destinationKey,
       destinationConfigRef: dependencies.destinationConfigRef, payload, status: reason === null ? 'pending' : 'suppressed',
       ...(reason === null ? {} : { reason: reason.toUpperCase() }), now: dependencies.clock.now() });
@@ -76,7 +88,7 @@ export async function deliverDigest(digestId: string, generation: number, depend
     return { kind: 'suppressed', reason: 'deadline' };
   }
   let result: SendResult;
-  try { result = await dependencies.sender.send(current.payload, attemptId, new AbortController().signal); }
+  try { result = await dependencies.sender.send({ ...current.payload, deliveryId: current.id }, attemptId, new AbortController().signal); }
   catch { result = { kind: 'uncertain', code: 'SENDER_THROW' }; }
   if (result.kind === 'suppressed') {
     await repository.markUncertain(current.id, attemptId, 'UNEXPECTED_SUPPRESSION_AFTER_CLAIM', dependencies.clock.now());

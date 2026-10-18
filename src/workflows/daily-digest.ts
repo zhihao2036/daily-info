@@ -36,7 +36,7 @@ export class DailyDigestWorkflow extends WorkflowEntrypoint<DailyWorkflowEnv, Di
       digestSnapshot = parseDigestConfigSnapshot(timeline.config_snapshot_json);
     } catch { /* Invalid legacy snapshots fail closed for model use and delivery. */ }
     if (params.mode === 'scheduled') {
-      await step.sleepUntil('wait-for-cutoff', timeline.cutoff_at);
+      if (Date.now() < timeline.cutoff_at) await step.sleepUntil('wait-for-cutoff', timeline.cutoff_at);
     }
 
     await step.do('freeze-candidates', async () => {
@@ -94,7 +94,7 @@ export class DailyDigestWorkflow extends WorkflowEntrypoint<DailyWorkflowEnv, Di
         }));
       }
     } else {
-      await step.sleepUntil('wait-for-build-deadline', timeline.build_deadline_at);
+      if (Date.now() < timeline.build_deadline_at) await step.sleepUntil('wait-for-build-deadline', timeline.build_deadline_at);
       const fallbackGeneration = await step.do('claim-fallback-generation', async () => (
         digests.claimFallback(params.digestId, params.generation, Date.now())
       ));
@@ -111,7 +111,7 @@ export class DailyDigestWorkflow extends WorkflowEntrypoint<DailyWorkflowEnv, Di
           ),
         }));
       }
-      await step.sleepUntil('wait-for-send-window', timeline.send_at);
+      if (Date.now() < timeline.send_at) await step.sleepUntil('wait-for-send-window', timeline.send_at);
       await step.do('deliver-digest', { retries: { limit: 0, delay: 0 } }, async () => {
         const deliveryConfig = digestSnapshot?.app.delivery ?? { channel: 'dummy' as const, destinationConfigRef: 'invalid-snapshot' };
         const currentDestinationKey = await sha256(deliveryDestinationValue(runtime.app, this.env));
@@ -132,7 +132,7 @@ export class DailyDigestWorkflow extends WorkflowEntrypoint<DailyWorkflowEnv, Di
           destinationKey,
         });
       });
-      await step.sleepUntil('wait-for-window-close', timeline.send_deadline_at);
+      if (Date.now() < timeline.send_deadline_at) await step.sleepUntil('wait-for-window-close', timeline.send_deadline_at);
     }
 
     await step.do('run-completed', async () => {

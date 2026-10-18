@@ -4,6 +4,10 @@ import { createApplication, type RuntimeEnv } from '../../src/app';
 import { sha256 } from '../../src/db/repositories/shared';
 import type { Clock, Sender } from '../../src/domain/contracts';
 import { deliverDigest, recoverDeliveries } from '../../src/delivery/service';
+import { createTelegramOutbox } from '../../src/delivery/telegram-outbox';
+import { renderDigest } from '../../src/editorial/render';
+import type { DigestContent } from '../../src/domain/contracts';
+import { createTelegramSender } from '../../src/delivery/telegram';
 
 const tables = ['delivery_attempts', 'deliveries', 'digests'] as const;
 async function reset(): Promise<void> { await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`))); }
@@ -25,6 +29,21 @@ async function seedDigest(input: { id?: string; mode?: 'scheduled' | 'preview'; 
   ) VALUES (?1,'personal',?2,'Asia/Shanghai',?3,'ready',?4,?5,?6,?7,?8,0,'{}','{}','plain','<p>plain</p>','content-hash',?9,?9)`)
     .bind(id, input.localDate ?? '2026-09-21', input.mode ?? 'scheduled', input.now - 172_800_000, input.now - 60_000,
       input.now - 30_000, sendAt, deadline, input.now - 120_000).run();
+  return id;
+}
+
+async function seedNewsDigest(now: number, count: number): Promise<string> {
+  const id = await seedDigest({ now });
+  const content: DigestContent = { digestId: id, localDate: '2026-09-21', cutoffAt: now - 60_000,
+    windowStartAt: now - 86400_000, coverageNote: null, degradedReason: null, noImportantUpdates: false,
+    cards: Array.from({ length: count }, (_, i) => ({ eventId: `e${i}`, eventVersionId: `v${i}`,
+      organization: 'Example', product: 'Product', productVersion: '', changeKind: 'release', title: `News ${i + 1}`,
+      summary: '摘要'.repeat(250), whyItMatters: '值得关注', suggestedAction: null, evidenceLabel: 'official' as const,
+      facts: [], scores: { relevance: 80, impact: 80, evidence: 80, novelty: 80, actionability: 80 }, score: 80,
+      sourceVersionIds: [], newInformation: null })) };
+  const rendered = renderDigest(content);
+  await env.DB.prepare('UPDATE digests SET content_json=?1,rendered_text=?2,rendered_html=?3 WHERE id=?4')
+    .bind(JSON.stringify(content), rendered.text, rendered.html, id).run();
   return id;
 }
 
@@ -82,6 +101,79 @@ describe('delivery state machine', () => {
     await recoverDeliveries(now + 5 * 60_000, deps);
     expect(send).toHaveBeenCalledTimes(1);
     expect((await env.DB.prepare('SELECT status FROM deliveries').first<{ status: string }>())?.status).toBe('uncertain');
+  });
+
+  it('sends ten news items as ten messages and never duplicates a completed delivery', async () => {
+    const now = Date.parse('2026-09-21T00:35:00Z');
+    const digestId = await seedNewsDigest(now, 10);
+    let messageId = 40;
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      expect(String(input)).toMatch(/\/sendMessage$/);
+      const body = JSON.parse(String(init?.body));
+      expect(body.text.length).toBeLessThanOrEqual(4096);
+      return new Response(JSON.stringify({ ok: true, result: { message_id: ++messageId } }));
+    });
+    let queries = 0;
+    const countedDb = { prepare(sql: string) { queries++; return env.DB.prepare(sql); },
+      batch: (statements: D1PreparedStatement[]) => env.DB.batch(statements) } as D1Database;
+    const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+      destinationConfigRef: 'personal-primary', fetcher, now: () => now,
+      outbox: createTelegramOutbox(countedDb), messageIntervalMs: 0 });
+    const deps = { ...dependencies(new FakeClock(now), sender, { channel: 'telegram' }), db: countedDb };
+    await deliverDigest(digestId, 0, deps);
+    expect(queries + fetcher.mock.calls.length).toBeLessThan(50);
+    await deliverDigest(digestId, 0, deps);
+    expect(fetcher).toHaveBeenCalledTimes(10);
+    const texts = fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).text);
+    expect(texts[0]).toContain('1/10');
+    expect(texts[9]).toContain('10/10');
+    expect(await env.DB.prepare("SELECT count(*) n FROM telegram_messages WHERE status='sent'").first()).toEqual({ n: 10 });
+    expect(await env.DB.prepare('SELECT status FROM digests WHERE id=?1').bind(digestId).first()).toMatchObject({ status: 'sent' });
+  });
+
+  it('resumes after a throttled item without repeating news already accepted', async () => {
+    const now = Date.parse('2026-09-21T00:35:00Z');
+    const clock = new FakeClock(now);
+    const digestId = await seedNewsDigest(now, 3);
+    const texts: string[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (_input, init) => {
+      texts.push(JSON.parse(String(init?.body)).text);
+      if (texts.length === 2) return new Response(JSON.stringify({ parameters: { retry_after: 1 } }), { status: 429 });
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 40 + texts.length } }));
+    });
+    const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+      destinationConfigRef: 'personal-primary', fetcher, now: () => clock.now(),
+      outbox: createTelegramOutbox(env.DB), messageIntervalMs: 0 });
+    const deps = dependencies(clock, sender, { channel: 'telegram' });
+    expect(await deliverDigest(digestId, 0, deps)).toMatchObject({ kind: 'rejected', retryable: true });
+    clock.value += 1001;
+    await recoverDeliveries(clock.value, deps);
+    expect(texts).toHaveLength(4);
+    expect(texts[0]).toContain('1/3');
+    expect(texts[1]).toBe(texts[2]);
+    expect(texts[3]).toContain('3/3');
+    expect(await env.DB.prepare('SELECT status,attempt_count FROM deliveries').first()).toMatchObject({ status: 'sent', attempt_count: 2 });
+    expect(await env.DB.prepare("SELECT count(*) n FROM telegram_messages WHERE status='sent'").first()).toEqual({ n: 3 });
+  });
+
+  it('stops after an ambiguous item and does not repeat its accepted prefix', async () => {
+    const now = Date.parse('2026-09-21T00:35:00Z');
+    const clock = new FakeClock(now);
+    const digestId = await seedNewsDigest(now, 3);
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      if (fetcher.mock.calls.length === 2) throw new Error('response lost');
+      return new Response(JSON.stringify({ ok: true, result: { message_id: 41 } }));
+    });
+    const sender = createTelegramSender({ botToken: '123456:abcdefghijklmnopqrstuvwxyz', chatId: '987654321',
+      destinationConfigRef: 'personal-primary', fetcher, now: () => clock.now(),
+      outbox: createTelegramOutbox(env.DB), messageIntervalMs: 0 });
+    const deps = dependencies(clock, sender, { channel: 'telegram' });
+    expect(await deliverDigest(digestId, 0, deps)).toMatchObject({ kind: 'uncertain' });
+    clock.value += 300_000;
+    await recoverDeliveries(clock.value, deps);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect((await env.DB.prepare('SELECT status FROM telegram_messages ORDER BY ordinal').all()).results)
+      .toEqual([{ status: 'sent' }, { status: 'uncertain' }]);
   });
 
   it('normalizes a stale in-flight call to uncertain without retrying it', async () => {
@@ -203,6 +295,7 @@ describe('delivery state machine', () => {
 
   it('recovers a Telegram delivery through the configured private-chat sender', async () => {
     const now = Date.parse('2026-09-21T00:35:00Z');
+    vi.spyOn(Date, 'now').mockReturnValue(now);
     const digestId = await seedDigest({ now });
     await env.DB.prepare("UPDATE digests SET status='delivery_failed' WHERE id=?1").bind(digestId).run();
     const destinationKey = await sha256('987654321');
