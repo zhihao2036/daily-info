@@ -21,7 +21,7 @@ export function createTelegramSender(config: TelegramSenderConfig): Sender {
     || config.destinationConfigRef.trim() === '') throw new Error('CONFIG_INVALID:TELEGRAM');
   const fetcher = config.fetcher ?? fetch;
   const now = config.now ?? (() => Date.now());
-  async function sendOne(text: string, signal: AbortSignal): Promise<SendResult> {
+  async function sendOne(text: string, signal: AbortSignal, disableLinkPreview = false): Promise<SendResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort('TELEGRAM_TIMEOUT'), config.timeoutMs ?? 15_000);
     const abort = () => controller.abort(signal.reason);
@@ -31,7 +31,8 @@ export function createTelegramSender(config: TelegramSenderConfig): Sender {
       const response = await fetcher(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: config.chatId, text }),
+        body: JSON.stringify({ chat_id: config.chatId, text,
+          ...(disableLinkPreview ? { link_preview_options: { is_disabled: true } } : {}) }),
         signal: controller.signal,
       });
       if (response.status === 429) {
@@ -99,7 +100,7 @@ export function createTelegramSender(config: TelegramSenderConfig): Sender {
               continue;
             }
           }
-          last = await sendOne(text, signal);
+          last = await sendOne(text, signal, payload.disableLinkPreview);
           requested = true;
           if (outbox && deliveryId) await outbox.settle(deliveryId, ordinal, attemptId, last, now());
           if (last.kind !== 'accepted') return last;

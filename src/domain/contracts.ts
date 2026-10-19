@@ -27,13 +27,15 @@ export interface SourceConfig {
   browserFallbackEnabled: boolean;
   upgradeHttpLinks?: boolean;
   github?: { owner: string; repo: string; includePrerelease: boolean };
-  html?: { listLinkSelector: string; articleSelector: string; dateSelector?: string };
+  html?: { listLinkSelector: string; articleSelector: string; dateSelector?: string;
+    changelog?: { entrySelector: string; titleSelector: string; dateSelector: string; yearSelector: string } };
 }
 
 export interface AppConfig {
   profileId: 'personal';
   timezone: 'Asia/Shanghai';
   schedule: { morning: '07:45'; cutoff: '08:00'; buildDeadline: '08:25'; send: '08:30'; close: '09:00' };
+  weeklyReport?: { enabled: boolean };
   limits: {
     maxSources: number;
     maxPages: number;
@@ -185,7 +187,7 @@ export interface RunStatus {
   finishedAt: EpochMs | null;
 }
 export interface ApiError { error: { code: string; message: string; requestId: string; retryable: boolean } }
-export interface DeliveryPayload { subject: string; text: string; html: string; destinationConfigRef: string; payloadHash: string; messages?: string[]; deliveryId?: string }
+export interface DeliveryPayload { subject: string; text: string; html: string; destinationConfigRef: string; payloadHash: string; messages?: string[]; deliveryId?: string; disableLinkPreview?: boolean }
 export type SendResult =
   | { kind: 'accepted'; providerMessageId: string | null; acceptedAt: EpochMs }
   | { kind: 'rejected'; retryable: boolean; code: string; retryAfterMs?: number }

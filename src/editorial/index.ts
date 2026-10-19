@@ -83,7 +83,7 @@ export async function buildDigest(digestId: string, generation: number, dependen
   const history = await dependencies.db.prepare(`
     SELECT de.snapshot_json FROM digest_events de JOIN digests d ON d.id=de.digest_id
     JOIN deliveries delivery ON delivery.digest_id=d.id
-    WHERE d.mode='scheduled' AND delivery.status IN ('sent','uncertain') AND d.cutoff_at>=?1
+    WHERE d.mode='scheduled' AND d.report_kind='daily' AND delivery.status IN ('sent','uncertain') AND d.cutoff_at>=?1
   `).bind(digest.cutoff_at - (appConfig?.editorial.historyDays ?? 30) * 86_400_000).all<{ snapshot_json: string }>();
   const historyFacts = new Map<string, Set<string | null>>();
   for (const row of history.results) {

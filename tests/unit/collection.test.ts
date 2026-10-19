@@ -169,7 +169,8 @@ describe('feed collectors', () => {
       source: github, cursor: { page: 1 }, deadlineAt: Date.now() + 10_000, signal: new AbortController().signal,
     });
     expect(page.items).toHaveLength(1);
-    expect(page.items[0]).toMatchObject({ externalKey: 'github-release:1', quality: 'full' });
+    expect(page.items[0]).toMatchObject({ externalKey: 'github-release:1', quality: 'full',
+      title: `${github.name}: Widget 2`, publishedAt: Date.parse('2026-09-20T18:00:00Z') });
     expect(page.nextCursor).toEqual({ page: 2 });
     expect(page.complete).toBe(false);
   });

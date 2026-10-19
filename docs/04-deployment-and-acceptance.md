@@ -88,10 +88,10 @@ pnpm exec wrangler secret put TELEGRAM_CHAT_ID --config wrangler.production.json
 确认测试消息成功后，单独将 SEND_ENABLED 设为字符串 true，并配置 Cron：
 
 ```json
-{"crons":["0 * * * *","45 23 * * *","*/5 * * * *"]}
+{"crons":["0 * * * *","45 23 * * *","*/5 * * * *","15 * * * *"]}
 ```
 
-这些是 UTC Cron：小时采集检查、北京时间 07:45 日报任务、五分钟恢复心跳。内容于 08:00 截止，08:30 发送，09:00 后不补发旧日报。最后执行 `pnpm deploy:checked -- production`。
+这些是 UTC Cron：小时采集检查、北京时间 07:45 日报任务、五分钟恢复心跳，以及每小时第 15 分钟的历史清理。内容于 08:00 截止，08:30 发送，09:00 后不补发旧日报。可选周报另加 `0 0 * * 1`，并设置 `APP_CONFIG.weeklyReport.enabled=true`，于每周一北京时间 08:00 汇总上周日报。最后执行 `pnpm deploy:checked -- production`。
 
 首次正式发送仍需观察 Telegram 客户端和 D1 delivery 回执。API 接受消息只代表 Telegram 接收请求，不代表已经阅读；结果 uncertain 时禁止盲目重试。
 

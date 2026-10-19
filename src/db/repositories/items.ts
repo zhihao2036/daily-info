@@ -131,8 +131,8 @@ export class ItemRepository {
           SELECT MAX(v.revision) FROM item_versions v
           WHERE v.item_id=items.id AND v.collection_run_id=?1 AND v.collection_page_no=?2
         )
-        WHERE EXISTS (SELECT 1 FROM item_versions v WHERE v.item_id=items.id
-          AND v.collection_run_id=?1 AND v.collection_page_no=?2)
+        WHERE id IN (SELECT v.item_id FROM item_versions v
+          WHERE v.collection_run_id=?1 AND v.collection_page_no=?2)
           AND EXISTS (SELECT 1 FROM collection_pages p WHERE p.run_id=?1 AND p.page_no=?2 AND p.status='committed')
           AND EXISTS (SELECT 1 FROM source_leases l WHERE l.source_id=?3 AND l.owner_id=?4
             AND l.fencing_token=?5 AND l.expires_at>?6)

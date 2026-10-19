@@ -95,12 +95,10 @@ export async function runRetention(
   if (remaining === 0) return { deleted };
 
   const itemRows = await db.prepare(`
-    SELECT i.id,COUNT(v.id) AS version_count FROM items i
-    LEFT JOIN item_versions v ON v.item_id=i.id
+    SELECT i.id,(SELECT COUNT(*) FROM item_versions v WHERE v.item_id=i.id) AS version_count FROM items i
     WHERE i.last_seen_at<?1
       AND NOT EXISTS (SELECT 1 FROM digest_candidates c WHERE c.item_id=i.id)
-    GROUP BY i.id
-    HAVING COUNT(v.id)+1<=?2
+      AND (SELECT COUNT(*) FROM item_versions v WHERE v.item_id=i.id)+1<=?2
     ORDER BY i.last_seen_at,i.id LIMIT ?2
   `).bind(now - 180 * DAY_MS, remaining).all<{ id: string; version_count: number }>();
   for (const row of itemRows.results) {

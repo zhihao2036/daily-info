@@ -3,6 +3,7 @@ import { extractHtml } from '../extractors/html';
 import { boundedFetch, type FetchLike } from './http';
 import { canonicalizeUrl, normalizeText } from './normalize';
 import type { BrowserFallback } from './browser-fallback';
+import { extractChangelog } from './changelog';
 
 interface LinkRecord { href: string; text: string[] }
 
@@ -71,6 +72,9 @@ export class HtmlListCollector implements Collector {
     }
     const pageSize = Math.max(1, Math.min(30, Math.trunc(input.pageSize ?? 30)));
     const maxBodyBytes = Math.max(1, Math.min(128 * 1024, Math.trunc(input.maxBodyBytes ?? 128 * 1024)));
+    if (input.source.html?.changelog !== undefined) {
+      return extractChangelog(listResponse, input.source, pageSize, maxBodyBytes);
+    }
     let links = await extractLinks(listResponse, input.source, 30);
     if (links.length === 0 && this.browserFallback !== undefined && input.runId !== undefined && input.lease !== undefined) {
       const rendered = await this.browserFallback.render({ source: input.source, runId: input.runId, lease: input.lease,

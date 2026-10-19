@@ -69,7 +69,7 @@ export class GithubReleasesCollector implements Collector {
       items.push({
         externalKey: `github-release:${release.id}`,
         canonicalUrl,
-        title: (release.name?.trim() || release.tag_name).trim(),
+        title: `${input.source.name}: ${(release.name?.trim() || release.tag_name).trim()}`,
         publishedAt,
         sourceUpdatedAt: null,
         body,

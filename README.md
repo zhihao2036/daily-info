@@ -22,6 +22,8 @@ pnpm test
 
 从 [首次部署指南](docs/04-deployment-and-acceptance.md) 继续创建自己的 D1、上传 Secrets、部署并验证预览。来源、模型和 Telegram 在验证后分别开启。完整配置模板是 [wrangler.example.jsonc](wrangler.example.jsonc)。
 
+支持 [GitHub Actions 自动部署](docs/07-github-actions.md)：main 通过检查后部署到 Cloudflare；生产配置和部署令牌存于仅允许 main 的 production Environment，PR 只运行无生产密钥的验证。Fork 默认关闭自动部署。
+
 ## 功能与边界
 
 - 采集：RSS/Atom、GitHub Releases、HTML 列表；允许主机列表、HTTPS、响应大小和重试有明确边界。
@@ -34,6 +36,8 @@ pnpm test
 [来源目录](reference/sources.example.json) 是待验证候选，默认全部禁用；网站可读性会随地区、时间和页面改版变化。部分来源只提供摘要或更新时间，可能不满足日报门槛。模型归并和评分并非完整新闻覆盖或独立事实核查。
 
 项目面向个人单用户，时区和发送时段目前固定；没有账号系统和公开阅读前端。Telegram 每条新闻单独发送一条文字消息，最多 10 条；每条附日期、序号、摘要和来源链接。单项过长时精简展示并保留主要来源，不发送附件。发送进度逐条保存，重试跳过已成功的消息，未知结果不自动重发。所有自动化网络和模型调用都受配置限制，但云资源仍由部署者管理。
+
+可选周报：设置 `APP_CONFIG.weeklyReport.enabled=true`，并添加 Cron `0 0 * * 1`，每周一北京时间 08:00 汇总上周一至周日已成功发送的日报新闻。每条使用原日报的一句话标题与一个来源链接，同一事件或链接保留最新一次，长报告自动分段；不额外调用模型。周报默认关闭，启用时还需保留五分钟心跳以恢复明确失败的投递。
 
 ## 开发与验证
 

@@ -66,6 +66,9 @@
       "delivery": {
         "channel": "dummy",
         "destinationConfigRef": "personal-primary"
+      },
+      "weeklyReport": {
+        "enabled": false
       }
     },
     "SOURCES_CONFIG": {

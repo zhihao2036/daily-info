@@ -31,6 +31,7 @@ export const appConfigSchema = z.strictObject({
     send: z.literal('08:30'),
     close: z.literal('09:00'),
   }),
+  weeklyReport: z.strictObject({ enabled: z.boolean() }).optional(),
   limits: z.strictObject({
     maxSources: positiveSafeInteger.max(20),
     maxPages: positiveSafeInteger.max(3),
@@ -108,6 +109,10 @@ const sourceConfigSchema = z.strictObject({
     listLinkSelector: z.string().trim().min(1),
     articleSelector: z.string().trim().min(1),
     dateSelector: z.string().trim().min(1).optional(),
+    changelog: z.strictObject({
+      entrySelector: z.string().trim().min(1), titleSelector: z.string().trim().min(1),
+      dateSelector: z.string().trim().min(1), yearSelector: z.string().trim().min(1),
+    }).optional(),
   }).optional(),
 }).superRefine((source, context) => {
   const host = new URL(source.url).hostname.toLowerCase();

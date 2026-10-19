@@ -174,7 +174,7 @@ export class DigestRepository {
       const previous = await this.db.prepare(`
         SELECT MAX(d.cutoff_at) AS cutoff_at FROM digests d
         JOIN deliveries delivery ON delivery.digest_id=d.id AND delivery.status='sent'
-        WHERE d.profile_id=?1 AND d.mode='scheduled' AND d.timezone='Asia/Shanghai' AND d.cutoff_at<?2
+        WHERE d.profile_id=?1 AND d.mode='scheduled' AND d.report_kind='daily' AND d.timezone='Asia/Shanghai' AND d.cutoff_at<?2
       `).bind(input.profileId, input.times.cutoffAt).first<{ cutoff_at: number | null }>();
       if (previous?.cutoff_at !== null && previous?.cutoff_at !== undefined) windowStartAt = previous.cutoff_at;
     }
@@ -189,7 +189,7 @@ export class DigestRepository {
       JSON.stringify(input.configSnapshot), input.now).run();
     const row = await this.db.prepare(`
       SELECT id,build_generation AS generation,status FROM digests
-      WHERE id=?1 OR (mode='scheduled' AND profile_id=?2 AND local_date=?3 AND timezone='Asia/Shanghai')
+      WHERE id=?1 OR (mode='scheduled' AND report_kind='daily' AND profile_id=?2 AND local_date=?3 AND timezone='Asia/Shanghai')
       LIMIT 1
     `).bind(id, input.profileId, input.times.localDate).first<{ id: string; generation: number; status: string }>();
     if (row === null) throw new Error('DIGEST_REGISTRATION_FAILED');

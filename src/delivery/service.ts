@@ -12,23 +12,32 @@ export interface DeliveryDependencies {
   destinationConfigRef: string;
   destinationKey: string;
   configurationMatches?: boolean;
+  weeklyEnabled?: boolean;
 }
 
 interface DigestRow {
-  id: string; mode: 'scheduled' | 'preview'; status: string; build_generation: number;
+  id: string; mode: 'scheduled' | 'preview'; report_kind: 'daily' | 'weekly'; status: string; build_generation: number;
   local_date: string; send_at: number; send_deadline_at: number; rendered_text: string | null;
   rendered_html: string | null; content_hash: string | null; content_json: string | null;
+  config_snapshot_json: string;
 }
 
 async function readDigest(db: D1Database, digestId: string): Promise<DigestRow> {
-  const row = await db.prepare(`SELECT id,mode,status,build_generation,local_date,send_at,send_deadline_at,
-    rendered_text,rendered_html,content_hash,content_json FROM digests WHERE id=?1`).bind(digestId).first<DigestRow>();
+  const row = await db.prepare(`SELECT id,mode,report_kind,status,build_generation,local_date,send_at,send_deadline_at,
+    rendered_text,rendered_html,content_hash,content_json,config_snapshot_json FROM digests WHERE id=?1`).bind(digestId).first<DigestRow>();
   if (row === null) throw new Error('DIGEST_NOT_FOUND');
   return row;
 }
 
 function suppression(row: DigestRow, dependencies: DeliveryDependencies): 'preview' | 'send_disabled' | 'dummy' | 'deadline' | 'config_changed' | null {
   if (row.mode === 'preview') return 'preview';
+  if (row.report_kind === 'weekly') {
+    if (dependencies.weeklyEnabled === false) return 'send_disabled';
+    const snapshot = JSON.parse(row.config_snapshot_json) as { deliveryDestinationKey?: string;
+      app?: { delivery?: { destinationConfigRef?: string } } };
+    if (snapshot.deliveryDestinationKey !== dependencies.destinationKey
+      || snapshot.app?.delivery?.destinationConfigRef !== dependencies.destinationConfigRef) return 'config_changed';
+  }
   if (dependencies.configurationMatches === false) return 'config_changed';
   if (!dependencies.sendEnabled) return 'send_disabled';
   if (dependencies.channel === 'dummy') return 'dummy';
@@ -40,7 +49,7 @@ function suppression(row: DigestRow, dependencies: DeliveryDependencies): 'previ
 export async function deliverDigest(digestId: string, generation: number, dependencies: DeliveryDependencies): Promise<SendResult> {
   const row = await readDigest(dependencies.db, digestId);
   const repository = new DeliveryRepository(dependencies.db);
-  const payload: DeliveryPayload = { subject: `AI / Agent 早报 · ${row.local_date}`, text: row.rendered_text ?? '',
+  const payload: DeliveryPayload = { subject: `AI / Agent ${row.report_kind === 'weekly' ? '周报' : '早报'} · ${row.local_date}`, text: row.rendered_text ?? '',
     html: row.rendered_html ?? '', destinationConfigRef: dependencies.destinationConfigRef,
     payloadHash: row.content_hash ?? await sha256(`${row.rendered_text ?? ''}\n${row.rendered_html ?? ''}`) };
   const reason = suppression(row, dependencies);
@@ -52,8 +61,11 @@ export async function deliverDigest(digestId: string, generation: number, depend
   }
   if (current === null) {
     if (reason === null && dependencies.channel === 'telegram' && row.content_json !== null) {
-      const content = JSON.parse(row.content_json) as Partial<DigestContent>;
-      if (Array.isArray(content.cards) && typeof content.localDate === 'string') {
+      const content = JSON.parse(row.content_json) as Partial<DigestContent> & { messages?: string[] };
+      if (row.report_kind === 'weekly') {
+        payload.messages = content.messages ?? [];
+        payload.disableLinkPreview = true;
+      } else if (Array.isArray(content.cards) && typeof content.localDate === 'string') {
         const versions = await dependencies.db.prepare(`SELECT v.id,v.canonical_url,v.published_at FROM digest_candidates c
           JOIN item_versions v ON v.id=c.item_version_id WHERE c.digest_id=?1`).bind(digestId)
           .all<{ id: string; canonical_url: string; published_at: number | null }>();

@@ -6,6 +6,8 @@
 
 支持 RSS/Atom、GitHub Releases 和静态 HTML 列表。RSS 可能只有摘要；HTML 选择器为空时仅保留 metadata_only；普通请求已成功但内容为空时可选 Browser Run 渲染。遇到 401/403/429 或登录、验证码等控制信号不得通过浏览器绕过。HTTP 文章链接仅在来源显式设置 upgradeHttpLinks=true 时升级为 HTTPS，仍逐跳校验允许主机。
 
+官方单页发布日志可在 `html.changelog` 配置 `entrySelector`、`titleSelector`、`dateSelector`、`yearSelector`，将各条公告单独收录。每次仅请求一次页面，不逐条抓正文；每条保留原页面锚点链接。日期取条目标签，年份取明确的分区年份或页面 Article/TechArticle 的 JSON-LD `datePublished`，不使用当前系统年份或 `dateModified` 补齐。缺日期的条目仍不能进入日报。Meta 官方 News RSS 可覆盖公司公告，AI 相关性由编辑阶段筛选；xAI/Grok 可使用官方开发者 Release Notes，新闻站拒绝请求时不得绕过限制。
+
 正式日报在北京时间 08:00 冻结候选，以最近 24 小时入库或有实质更新的版本为主；发布日期必须明确，不晚于 cutoff，最多补录 72 小时内的文章。旧文章不会因重试元数据或 revision 增加而变成新新闻。没有 published 的 Atom 条目不把 updated 当作发布日期；仅有图片、元数据或日期缺失的条目不能凑数。
 
 候选按来源轮转，再受总数量限制；公开模板最多 60 篇候选、10 篇深入处理。最终最多 10 个事件，不保证必须达到固定数量，每个来源和组织最多两条。来源 priority 和 core 属性不是强制收录配额。

@@ -7,11 +7,12 @@ import { canonicalJson, sha256 } from './db/repositories/shared';
 import type { AppConfig, CollectParams, DigestParams, Json, RunAccepted, SourceConfig } from './domain/contracts';
 import { requestHash } from './api/idempotency';
 import { createRuntimeSender, deliveryDestinationValue } from './delivery/runtime';
-import { recoverDeliveries } from './delivery/service';
+import { deliverDigest, recoverDeliveries } from './delivery/service';
 import { dispatchRun, type WorkflowBindingLike } from './scheduler/dispatch';
 import { reconcile } from './scheduler/reconcile';
 import { digestTimes, isRecoveryMinute, previewTimes } from './scheduler/time';
 import { buildDigest } from './editorial';
+import { ensureWeeklyReport, weeklyTimes } from './editorial/weekly';
 import { runRetention } from './maintenance/retention';
 import type { BrowserBinding } from './collectors/browser-fallback';
 
@@ -71,23 +72,33 @@ export function loadRuntimeConfig(env: RuntimeEnv): RuntimeConfig {
 }
 
 export async function syncSources(db: D1Database, sources: SourceConfig[], now: number): Promise<void> {
-  const statements: D1PreparedStatement[] = [db.prepare(`
-    UPDATE sources SET enabled=0,updated_at=?1
-    WHERE enabled<>0 AND id NOT IN (SELECT value FROM json_each(?2))
-  `).bind(now, JSON.stringify(sources.map((source) => source.id)))];
+  const existing = await db.prepare('SELECT id,config_hash,enabled,is_core FROM sources')
+    .all<{ id: string; config_hash: string; enabled: number; is_core: number }>();
+  const byId = new Map(existing.results.map(source => [source.id, source]));
+  const configuredIds = new Set(sources.map(source => source.id));
+  const removedIds = existing.results.filter(source => source.enabled !== 0 && !configuredIds.has(source.id)).map(source => source.id);
+  const statements: D1PreparedStatement[] = [];
+  if (removedIds.length > 0) {
+    statements.push(db.prepare('UPDATE sources SET enabled=0,updated_at=?1 WHERE enabled<>0 AND id IN (SELECT value FROM json_each(?2))')
+      .bind(now, JSON.stringify(removedIds)));
+  }
   for (const source of sources) {
     const configJson = canonicalJson(source);
     const configHash = await sha256(configJson);
+    const current = byId.get(source.id);
+    if (current?.config_hash === configHash && current.enabled === Number(source.enabled)
+      && current.is_core === Number(source.core)) continue;
     statements.push(db.prepare(`INSERT INTO sources(
       id,kind,name,url,config_json,enabled,is_core,config_hash,cursor_json,created_at,updated_at
     ) VALUES (?1,?2,?3,?4,json(?5),?6,?7,?8,json(?9),?10,?10)
     ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,name=excluded.name,url=excluded.url,
       config_json=excluded.config_json,enabled=excluded.enabled,is_core=excluded.is_core,
-      config_hash=excluded.config_hash,updated_at=excluded.updated_at`)
+      config_hash=excluded.config_hash,updated_at=excluded.updated_at
+    WHERE sources.config_hash<>excluded.config_hash OR sources.enabled<>excluded.enabled OR sources.is_core<>excluded.is_core`)
       .bind(source.id, source.kind, source.name, source.url, configJson, source.enabled ? 1 : 0,
         source.core ? 1 : 0, configHash, JSON.stringify({ highWater: null, resume: null, scanStartedAt: null }), now));
   }
-  await db.batch(statements);
+  if (statements.length > 0) await db.batch(statements);
 }
 
 async function observeOrCreate<P>(binding: Workflow<P>, workflowId: string, params: P, runs: RunRepository, runId: string, now: number): Promise<void> {
@@ -187,7 +198,7 @@ export function createApplication(env: RuntimeEnv, now: () => number = () => Dat
       const sources = await env.DB.prepare(`SELECT id,last_success_at,last_error_code,failure_count FROM sources WHERE enabled=1 ORDER BY id`)
         .all<Record<string, string | number | null>>();
       const today = digestTimes(now()).localDate;
-      const digest = await env.DB.prepare(`SELECT id,status,local_date FROM digests WHERE mode='scheduled' AND local_date=?1 LIMIT 1`)
+      const digest = await env.DB.prepare(`SELECT id,status,local_date FROM digests WHERE mode='scheduled' AND report_kind='daily' AND local_date=?1 LIMIT 1`)
         .bind(today).first<Record<string, string | number | null>>();
       const accepted = await env.DB.prepare("SELECT MAX(accepted_at) AS value FROM deliveries WHERE status='sent'").first<{ value: number | null }>();
       const collected = await env.DB.prepare('SELECT MAX(last_success_at) AS value FROM sources').first<{ value: number | null }>();
@@ -214,6 +225,23 @@ export function createApplication(env: RuntimeEnv, now: () => number = () => Dat
   async function scheduled(controller: ScheduledController): Promise<void> {
     await prepare();
     const scheduledAt = controller.scheduledTime;
+    if (controller.cron === '15 * * * *') {
+      await runRetention(env.DB, now(), 100);
+      return;
+    }
+    const weekly = weeklyTimes(scheduledAt);
+    if (config.app.weeklyReport?.enabled && config.sendEnabled && env.APP_ENV === 'production'
+      && config.app.delivery.channel === 'telegram' && weekly !== null
+      && scheduledAt >= weekly.sendAt && scheduledAt < weekly.sendDeadlineAt
+      && now() >= weekly.sendAt && now() < weekly.sendDeadlineAt
+      && (controller.cron === '0 0 * * 1' || controller.cron === '*/5 * * * *')) {
+      const destinationKey = await sha256(deliveryDestinationValue(config.app, env));
+      const id = await ensureWeeklyReport({ db: env.DB, app: config.app, sources: config.sources,
+        times: weekly, destinationKey, now: now() });
+      await deliverDigest(id, 0, { db: env.DB, clock: { now }, sender: createRuntimeSender(config.app, env),
+        sendEnabled: true, channel: 'telegram', destinationConfigRef: config.app.delivery.destinationConfigRef,
+        destinationKey });
+    }
     if (controller.cron === '0 * * * *' || controller.cron === '45 23 * * *') {
       const slot = Math.floor(scheduledAt / 3_600_000);
       for (const source of config.sources.filter((candidate) => candidate.enabled && (controller.cron !== '0 * * * *' || slot % candidate.intervalHours === 0))) {
@@ -252,6 +280,7 @@ export function createApplication(env: RuntimeEnv, now: () => number = () => Dat
         clock: { now },
         sender,
         sendEnabled: config.sendEnabled && env.APP_ENV === 'production',
+        weeklyEnabled: config.app.weeklyReport?.enabled ?? false,
         channel: config.app.delivery.channel,
         destinationConfigRef: config.app.delivery.destinationConfigRef,
         destinationKey: await sha256(deliveryDestinationValue(config.app, env)),
@@ -316,7 +345,6 @@ export function createApplication(env: RuntimeEnv, now: () => number = () => Dat
       }
       await env.DB.prepare(`UPDATE digests SET status='expired',updated_at=?1 WHERE mode='scheduled'
         AND send_deadline_at<=?1 AND status IN ('collecting','building','ready','delivery_failed')`).bind(actualNow).run();
-      await runRetention(env.DB, actualNow, 100);
     }
   }
 
