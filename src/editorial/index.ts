@@ -158,14 +158,16 @@ export async function buildDigest(digestId: string, generation: number, dependen
   const coverageFailed = coreTotal === 0 || coreFailed > 0;
   const insufficientContent = rows.results.length > 0 && versions.length === 0;
   const awaitingBody = model?.filterDecisions.some(entry => entry.decision === 'needs_body') ?? false;
-  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed && !awaitingBody;
+  const incompleteFilter = model !== null && model.filterDecisions.length < versions.length;
+  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed && !awaitingBody && !incompleteFilter;
   const content: DigestContent = {
     digestId, localDate: digest.local_date, cutoffAt: digest.cutoff_at, windowStartAt: digest.window_start_at,
     cards: selected,
     coverageNote: coverageFailed ? '采集异常，今日无法可靠判断。'
       : insufficientContent ? '已发现条目，但正文证据不足，暂不生成新闻摘要。'
         : editorialFailed ? '模型编辑未完成，本次仅保留来源标题供核验。'
-          : awaitingBody ? '部分候选正文证据不足，暂未收录；本期仅发布已核验内容。' : null,
+          : incompleteFilter ? '部分候选未完成筛选；本期仅发布已核验内容。'
+            : awaitingBody ? '部分候选正文证据不足，暂未收录；本期仅发布已核验内容。' : null,
     degradedReason: coverageFailed ? 'core_sources_failed' : insufficientContent ? 'insufficient_content'
       : editorialFailed ? 'editorial_model_failed' : null,
     noImportantUpdates,
@@ -173,7 +175,7 @@ export async function buildDigest(digestId: string, generation: number, dependen
       const result = model.filterDecisions.find(entry => entry.itemVersionId === version.id);
       const score = result === undefined ? null : scoreEvent(result.scores);
       const outcome = selected.some(card => card.sourceVersionIds.includes(version.id)) ? 'selected'
-        : result === undefined ? 'filter_limit'
+        : result === undefined ? 'filter_unscored'
           : result.decision !== 'keep' ? result.decision
             : score! < (appConfig?.editorial.threshold ?? 60) ? 'below_threshold'
               : !model.keptIds.has(version.id) ? 'deep_read_limit'

@@ -12,6 +12,22 @@ function version(id: string, body: string): ItemVersion {
 }
 
 describe('editorial invariants', () => {
+  it('retains valid decisions when a filter omits an ID and ignores foreign or duplicated IDs', async () => {
+    const items = ['valid', 'missing', 'duplicate'].map(id => version(id, 'The product now supports private conversations.'));
+    const score = { relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 };
+    const result = await runEditorialModel({ digestId: 'partial-filter', generation: 0, deadlineAt: Date.now() + 60_000,
+      maxOutputTokens: 1000, promptVersion: 'v2', maxCharsPerArticle: 1000, maxDeepRead: 20, maxEvents: 10,
+      maxAttemptsPerStage: 3, maxRepairAttempts: 0, versions: items,
+      deterministicGroups: items.map(item => ({ eventKey: item.id, organization: item.id, product: 'Product', productVersion: '', changeKind: 'release', versionIds: [item.id] })),
+      complete: async call => {
+        if (call.ownerStage === 'filter') return { value: { results: ['valid', 'duplicate', 'duplicate', 'foreign'].map(id => ({ itemVersionId: id, decision: 'keep', scores: score })) }, usage: null, providerRequestId: null };
+        if (call.ownerStage === 'group') return { value: { groups: [{ eventKey: 'valid', memberIds: ['valid'], confidence: 0.99 }] }, usage: null, providerRequestId: null };
+        return { value: { cards: [{ eventKey: 'valid', title: '私密对话功能', summary: '产品支持私密对话。', whyItMatters: '可能改善隐私保护。', suggestedAction: null,
+          facts: [{ text: items[0]!.bodyText, evidence: [{ itemVersionId: 'valid', quote: items[0]!.bodyText }] }] }] }, usage: null, providerRequestId: null };
+      } });
+    expect(result.filterDecisions.map(entry => entry.itemVersionId)).toEqual(['valid']);
+    expect([...result.edits.keys()]).toEqual(['valid']);
+  });
   it.each([false, true])('edits bounded reserve batches without a source cap and preserves prior results (later failure: %s)', async (failLater) => {
     const items = Array.from({ length: 16 }, (_, i) => ({ ...version(`v${String(i).padStart(2, '0')}`, 'The product now supports private conversations.'), title: `Product ${i} update` }));
     const stages: string[] = [];

@@ -182,8 +182,13 @@ export async function runEditorialModel(input: {
         body: [...articleText(version)].slice(0, input.maxCharsPerArticle).join(''),
       })),
     } })).value);
-    assertExactIds(filter.results.map((entry) => entry.itemVersionId), batch.map((version) => version.id), 'FILTER_IDS_INVALID');
-    filterResults.push(...filter.results);
+    const allowedIds = new Set(batch.map(version => version.id));
+    const counts = new Map<string, number>();
+    for (const entry of filter.results) counts.set(entry.itemVersionId, (counts.get(entry.itemVersionId) ?? 0) + 1);
+    // A missing or duplicated decision is unscored, not a reason to discard
+    // every other batch. Foreign IDs can never enter the editorial pipeline.
+    filterResults.push(...filter.results.filter(entry => allowedIds.has(entry.itemVersionId)
+      && counts.get(entry.itemVersionId) === 1));
   }
   const scoresById = new Map(filterResults.map((entry) => [entry.itemVersionId, entry.scores]));
   const keptIds = new Set(filterResults.filter((entry) => entry.decision === 'keep' && scoreEvent(entry.scores) >= (input.threshold ?? 60))
