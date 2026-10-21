@@ -181,13 +181,13 @@ export class ItemRepository {
   async findBodyRetryCandidates(sourceId: string, now: number, limit = 20): Promise<BodyRetryCandidate[]> {
     const boundedLimit = Math.max(1, Math.min(20, Math.trunc(limit)));
     const rows = await this.db.prepare(`
-      SELECT i.id AS item_id,v.id AS version_id,i.external_key,v.canonical_url,v.title,v.published_at,v.source_updated_at,
+      SELECT i.id AS item_id,v.id AS version_id,i.external_key,v.canonical_url,v.title,v.published_at,v.source_updated_at,v.body_text,v.quality,
         COALESCE(json_extract(v.metadata_json,'$.extractionAttempts'),0) AS attempts
       FROM items i JOIN item_versions v ON v.item_id=i.id AND v.revision=i.current_revision
-      WHERE i.source_id=?1 AND v.quality='metadata_only' AND i.last_seen_at>=?2
+      WHERE i.source_id=?1 AND v.quality IN ('metadata_only','partial') AND i.last_seen_at>=?2
         AND COALESCE(json_extract(v.metadata_json,'$.extractionAttempts'),0)<3
         AND COALESCE(json_extract(v.metadata_json,'$.nextBodyRetryAt'),0)<=?3
-      ORDER BY i.last_seen_at DESC,i.id LIMIT ?4
+      ORDER BY v.published_at DESC,i.last_seen_at DESC,i.id LIMIT ?4
     `).bind(sourceId, now - 7 * 86_400_000, now, boundedLimit).all<{
       item_id: string;
       version_id: string;
@@ -197,6 +197,8 @@ export class ItemRepository {
       published_at: number | null;
       source_updated_at: number | null;
       attempts: number;
+      body_text: string;
+      quality: BodyRetryCandidate['quality'];
     }>();
     return rows.results.map((row) => ({
       itemId: row.item_id,
@@ -207,6 +209,8 @@ export class ItemRepository {
       publishedAt: row.published_at,
       sourceUpdatedAt: row.source_updated_at,
       attempts: row.attempts,
+      body: row.body_text,
+      ...(row.quality === undefined ? {} : { quality: row.quality }),
     }));
   }
 }

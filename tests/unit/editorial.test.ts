@@ -5,13 +5,37 @@ import { groupByEventIdentity, inferEventIdentity } from '../../src/editorial/gr
 import { renderDigest } from '../../src/editorial/render';
 import { validateEvidence } from '../../src/editorial/validate';
 import { runEditorialModel, validateEditorialResponse } from '../../src/editorial/model';
-import { articleText, diverseIds, evidenceSnippets } from '../../src/editorial/evidence';
+import { articleText, evidenceSnippets } from '../../src/editorial/evidence';
 
 function version(id: string, body: string): ItemVersion {
   return { id, itemId: `item-${id}`, sourceId: 'source', revision: 1, title: 'Widget 2.0', canonicalUrl: `https://example.com/${id}`, publishedAt: null, ingestedAt: 1, bodyText: body, quality: 'full', contentHash: id };
 }
 
 describe('editorial invariants', () => {
+  it.each([false, true])('edits bounded reserve batches without a source cap and preserves prior results (later failure: %s)', async (failLater) => {
+    const items = Array.from({ length: 16 }, (_, i) => ({ ...version(`v${String(i).padStart(2, '0')}`, 'The product now supports private conversations.'), title: `Product ${i} update` }));
+    const stages: string[] = [];
+    let editCalls = 0;
+    const result = await runEditorialModel({ digestId: 'coverage', generation: 0, deadlineAt: Date.now() + 60_000,
+      maxOutputTokens: 2000, promptVersion: 'v2', maxCharsPerArticle: 1000, maxDeepRead: 20, maxEvents: 10,
+      maxAttemptsPerStage: 3, maxRepairAttempts: 0, versions: items,
+      deterministicGroups: items.map(item => ({ eventKey: item.id, organization: item.id, product: 'Product', productVersion: '', changeKind: 'release', versionIds: [item.id] })),
+      complete: async call => {
+        stages.push(call.ownerStage);
+        if (call.ownerStage === 'filter') return { value: { results: items.map(item => ({ itemVersionId: item.id, decision: 'keep', scores: {
+          relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 } })) }, usage: null, providerRequestId: null };
+        if (call.ownerStage === 'group') return { value: { groups: items.map(item => ({ eventKey: item.id, memberIds: [item.id], confidence: 0.99 })) }, usage: null, providerRequestId: null };
+        editCalls += 1;
+        if (failLater && editCalls === 2) throw new Error('LLM_TIMEOUT');
+        const payload = (call.request.input as { payload: { events: Array<{ eventKey: string }> } }).payload;
+        expect(payload.events.length).toBeLessThanOrEqual(10);
+        return { value: { cards: payload.events.map(event => ({ eventKey: event.eventKey, title: '私密对话功能上线', summary: '产品支持私密对话。', whyItMatters: '可能改善隐私保护。', suggestedAction: null,
+          facts: [{ text: items[0]!.bodyText, evidence: [{ itemVersionId: event.eventKey, quote: items[0]!.bodyText }] }] })) }, usage: null, providerRequestId: null };
+      } });
+    expect(result.keptIds.size).toBe(16);
+    expect(result.edits.size).toBe(failLater ? 10 : 16);
+    expect(stages).toEqual(['filter', 'group', 'edit', 'edit']);
+  });
   it('passes official summary provenance and corrects an invalid edit once without weakening evidence checks', async () => {
     const item = { ...version('rss', 'The vendor&#8217;s API access is now available to academic research labs.'), quality: 'partial' as const };
     let edits = 0;
@@ -84,13 +108,6 @@ describe('editorial invariants', () => {
     expect(evidenceSnippets(item)).not.toContain('Comment · Sign up');
   });
 
-  it('limits a high-volume source while retaining relevant candidates from other sources', () => {
-    const items = [version('a1', 'a'), version('a2', 'b'), version('a3', 'c'),
-      { ...version('b1', 'd'), sourceId: 'other' }];
-    expect(diverseIds(items.map(x => x.id), new Map(items.map(x => [x.id, x])), 8))
-      .toEqual(['a1', 'a2', 'b1']);
-  });
-
   it('excludes ticket promotions while retaining product pricing news', () => {
     expect(isPromotionalTitle('Last chance to save up to $200: Early booking ends October 16')).toBe(true);
     expect(isPromotionalTitle('Early-bird tickets for our AI summit')).toBe(true);
@@ -108,7 +125,13 @@ describe('editorial invariants', () => {
     expect(selectEvents(cards)).toHaveLength(10);
     expect(selectEvents(cards, 60, 20)).toHaveLength(10);
     expect(selectEvents(cards, 85, 10)).toHaveLength(6);
-    expect(selectEvents(cards, 60, 10, new Map(cards.map(card => [card.sourceVersionIds[0]!, 'one-source'])))).toHaveLength(2);
+    expect(selectEvents(cards, 60, 10, new Map(cards.map(card => [card.sourceVersionIds[0]!, 'one-source'])))).toHaveLength(10);
+    expect(selectEvents(cards, 60, 0)).toEqual([]);
+    const sourceMap = new Map(cards.map((card, index) => [card.sourceVersionIds[0]!, index < 3 ? 'large-outlet' : 'other']));
+    expect(selectEvents(cards, 60, 3, sourceMap).map(card => card.eventId)).toEqual(['e0', 'e1', 'e3']);
+    // Diversity is a preference, not a veto: a distinctly more important third story survives.
+    cards[0]!.score = 100; cards[1]!.score = 99; cards[2]!.score = 98;
+    expect(selectEvents(cards, 60, 3, sourceMap).map(card => card.eventId)).toEqual(['e0', 'e1', 'e2']);
   });
 
   it('accepts ten edited cards and rejects an eleventh', () => {
@@ -189,7 +212,7 @@ describe('editorial invariants', () => {
     expect(scoreEvent({ relevance: 90, impact: 80, evidence: 80, novelty: 80, actionability: 60 })).toBe(82.5);
   });
 
-  it('ranks more than eight kept groups before edit instead of forcing a schema failure', async () => {
+  it('keeps reserve drafts beyond the final event limit so validation can still fill the digest', async () => {
     const versions = Array.from({ length: 9 }, (_, index) => ({
       ...version(`v${index}`, `Verified fact ${index}`), sourceId: `source-${index}`, title: `Org Product topic-${index}`,
     }));
@@ -214,15 +237,15 @@ describe('editorial invariants', () => {
         }
         const events = envelope.payload.events as Array<{ eventKey: string; sources: Array<{ itemVersionId: string; evidenceSnippet: string }> }>;
         expect(envelope.payload.targetChineseChars).toEqual({ min: 800, max: 1000 });
-        expect(events).toHaveLength(8);
+        expect(events).toHaveLength(9);
         return { value: { cards: events.map((event) => ({ eventKey: event.eventKey, title: event.eventKey,
           summary: event.sources[0]!.evidenceSnippet, whyItMatters: '建议核验原文。', suggestedAction: null,
           facts: [{ text: event.sources[0]!.evidenceSnippet, evidence: [{ itemVersionId: event.sources[0]!.itemVersionId,
             quote: event.sources[0]!.evidenceSnippet }] }] })) }, usage: null, providerRequestId: null };
       },
     });
-    expect(result.groups).toHaveLength(8);
-    expect(result.edits.size).toBe(8);
+    expect(result.groups).toHaveLength(9);
+    expect(result.edits.size).toBe(9);
   });
 
   it('keeps valid editorial cards when another card fails source evidence validation', async () => {

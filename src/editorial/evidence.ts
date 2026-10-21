@@ -26,17 +26,3 @@ export function evidenceSnippets(version: ItemVersion): string[] {
     .filter((text) => text.length > 20 && !/^(?:Back to Articles|Share|Read AI-generated summary|In this article|By\b|Published\b)/i.test(text));
   return paragraphs.slice(0, 12).map((text) => [...text].slice(0, 240).join(''));
 }
-
-/** Greedy score order with a per-source cap; fewer strong articles are preferable to padding. */
-export function diverseIds(ids: string[], byId: ReadonlyMap<string, ItemVersion>, limit: number, perSource = 2): string[] {
-  const counts = new Map<string, number>();
-  const result: string[] = [];
-  for (const id of ids) {
-    const source = byId.get(id)?.sourceId;
-    if (source === undefined || (counts.get(source) ?? 0) >= perSource) continue;
-    counts.set(source, (counts.get(source) ?? 0) + 1);
-    result.push(id);
-    if (result.length >= limit) break;
-  }
-  return result;
-}

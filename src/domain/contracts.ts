@@ -59,6 +59,7 @@ export interface AppConfig {
     historyDays: number;
     lateHours: number;
     initialHours: number;
+    catchupDays?: number;
     threshold: number;
   };
   llm: {
@@ -108,6 +109,8 @@ export interface BodyRetryCandidate {
   publishedAt: EpochMs | null;
   sourceUpdatedAt: EpochMs | null;
   attempts: number;
+  body?: string;
+  quality?: ContentQuality;
 }
 export interface Collector {
   fetchPage(input: { source: SourceConfig; cursor: Json; deadlineAt: EpochMs; signal: AbortSignal;
@@ -162,6 +165,7 @@ export interface DigestContent {
   degradedReason: string | null;
   noImportantUpdates: boolean;
   sourceCoverage?: Array<{ sourceId: string; name: string; candidates: number; selected: number }>;
+  editorialAudit?: Array<{ itemVersionId: string; title: string; score: number | null; outcome: string }>;
 }
 export interface DigestTimes { localDate: string; morningAt: EpochMs; cutoffAt: EpochMs; buildDeadlineAt: EpochMs; sendAt: EpochMs; sendDeadlineAt: EpochMs }
 export interface CollectParams {

@@ -17,6 +17,7 @@ export async function extractHtml(
   const withoutChrome = new HTMLRewriter().on(EXCLUDED, { element(element) { element.remove(); } }).transform(response);
   const chunks: string[] = [];
   const titleChunks: string[] = [];
+  let dateChunks: string[] = [];
   let publishedAt: number | undefined;
   const recordDate = (value: string | null) => {
     if (publishedAt !== undefined || value === null) return;
@@ -38,7 +39,16 @@ export async function extractHtml(
     .on('meta[property="article:published_time"], meta[name="date"]', {
       element(element) { recordDate(element.getAttribute('content')); },
     }).on(source.html.dateSelector ?? 'time[datetime]', {
-      element(element) { recordDate(element.getAttribute('datetime') ?? element.getAttribute('content')); },
+      element(element) {
+        recordDate(element.getAttribute('datetime') ?? element.getAttribute('content'));
+        dateChunks = [];
+        element.onEndTag(() => {
+          const label = normalizeText(dateChunks.join(''));
+          // Text-only dates must explicitly include a year. Never guess from the clock.
+          if (/\b20\d{2}\b/.test(label)) recordDate(label);
+        });
+      },
+      text(text) { dateChunks.push(text.text); },
     }).transform(withoutChrome);
   await transformed.arrayBuffer();
   if (matched === 0) return { text: '', quality: 'metadata_only' };

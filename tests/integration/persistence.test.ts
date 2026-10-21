@@ -212,6 +212,39 @@ describe('D1 persistence', () => {
     expect(frozen.map(x => x.version.bodyText)).toEqual(['after']);
   });
 
+  it('carries an unsent future-dated article into the next window without replaying exposed content', async () => {
+    const now = Date.now();
+    const repo = new D1Persistence(env.DB, new FakeClock(now));
+    await insertSource(now);
+    await insertRun('catchup-run', 'hf-blog', now);
+    const lease = (await repo.acquireLease('hf-blog', 'owner', now))!;
+    const app = JSON.parse(env.APP_CONFIG as string);
+    app.editorial.catchupDays = 7;
+    const config = { app, sources: [snapshotSource()] } as unknown as Json;
+    await repo.commitPage({ runId: 'catchup-run', pageNo: 0, lease, expectedCursorVersion: 0,
+      requestCursor: null, nextCursor: null, complete: true, items: [
+        { ...article('Delayed model news', now + 26 * 60_000), externalKey: 'future', canonicalUrl: 'https://example.com/future' },
+        { ...article('Already delivered', now - 1000), externalKey: 'sent', canonicalUrl: 'https://example.com/sent' },
+        { ...article('Unsent technical guide', now - 5 * 86_400_000), externalKey: 'guide', canonicalUrl: 'https://example.com/guide' },
+      ] });
+    await env.DB.prepare('UPDATE item_versions SET ingested_at=?1').bind(now - 1000).run();
+    await env.DB.prepare('UPDATE collection_pages SET committed_at=?1').bind(now - 1000).run();
+    await insertDigest({ id: 'first-day', now, windowStartAt: now - 86_400_000, cutoffAt: now, configSnapshot: config });
+    const first = await repo.freezeCandidates('first-day', 0);
+    expect(first.some(candidate => candidate.version.bodyText === 'Delayed model news')).toBe(false);
+    const sent = first.find(candidate => candidate.version.bodyText === 'Already delivered')!;
+    await env.DB.prepare("INSERT INTO events VALUES ('event','event-key','Org','Product','','release',?1)").bind(now).run();
+    await env.DB.prepare("INSERT INTO event_versions VALUES ('event-version','event',1,'facts','{}',?1)").bind(now).run();
+    await env.DB.prepare("INSERT INTO digest_events VALUES ('first-day','event-version',1,?1)")
+      .bind(JSON.stringify({ card: { sourceVersionIds: [sent.version.id] } })).run();
+    await env.DB.prepare(`INSERT INTO deliveries(id,digest_id,channel,destination_key,destination_config_ref,payload_json,payload_hash,status,created_at,updated_at)
+      VALUES ('delivered','first-day','dummy','dest','ref','{}','hash','uncertain',?1,?1)`).bind(now).run();
+    await insertDigest({ id: 'second-day', now, localDate: '2026-09-22', windowStartAt: now, cutoffAt: now + 86_400_000, configSnapshot: config });
+    const next = await repo.freezeCandidates('second-day', 0);
+    expect(next.map(candidate => candidate.version.bodyText).sort()).toEqual(['Delayed model news', 'Unsent technical guide']);
+    expect(next.find(candidate => candidate.version.bodyText === 'Unsent technical guide')?.reason).toBe('late');
+  });
+
   it('enforces frozen late-hour and candidate-count limits', async () => {
     const now = Date.now();
     const repo = new D1Persistence(env.DB, new FakeClock(now));

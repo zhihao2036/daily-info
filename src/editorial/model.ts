@@ -3,7 +3,7 @@ import type { BudgetedCall, EventCard, Fact, ItemVersion, LlmResponse } from '..
 import { PROMPTS } from '../prompts';
 import { validateEvidence } from './validate';
 import { scoreEvent } from './filter';
-import { articleText, diverseIds, evidenceSnippets, sharesTopic } from './evidence';
+import { articleText, evidenceSnippets, sharesTopic } from './evidence';
 
 export type EditorialComplete = (call: BudgetedCall) => Promise<LlmResponse>;
 
@@ -57,6 +57,7 @@ export interface ModelGroupInput {
 }
 
 export interface EditorialModelResult {
+  filterDecisions: z.infer<typeof filterOutput>['results'];
   keptIds: Set<string>;
   scoresById: Map<string, EventCard['scores']>;
   groups: ModelGroupInput[];
@@ -144,6 +145,7 @@ export async function runEditorialModel(input: {
   maxCharsPerArticle: number;
   maxDeepRead: number;
   maxEvents: number;
+  threshold?: number;
   targetMinChars?: number;
   targetMaxChars?: number;
   maxAttemptsPerStage: number;
@@ -184,12 +186,12 @@ export async function runEditorialModel(input: {
     filterResults.push(...filter.results);
   }
   const scoresById = new Map(filterResults.map((entry) => [entry.itemVersionId, entry.scores]));
-  const keptIds = new Set(diverseIds(filterResults.filter((entry) => entry.decision === 'keep')
+  const keptIds = new Set(filterResults.filter((entry) => entry.decision === 'keep' && scoreEvent(entry.scores) >= (input.threshold ?? 60))
     .sort((left, right) => scoreEvent(right.scores) - scoreEvent(left.scores) || left.itemVersionId.localeCompare(right.itemVersionId))
-    .map((entry) => entry.itemVersionId), new Map(eligibleVersions.map((version) => [version.id, version])), input.maxDeepRead));
+    .slice(0, input.maxDeepRead).map((entry) => entry.itemVersionId));
   const eligibleGroups = input.deterministicGroups.map((group) => ({ ...group,
     versionIds: group.versionIds.filter((id) => keptIds.has(id)) })).filter((group) => group.versionIds.length > 0);
-  if (eligibleGroups.length === 0) return { keptIds, scoresById, groups: [], edits: new Map() };
+  if (eligibleGroups.length === 0) return { filterDecisions: filterResults, keptIds, scoresById, groups: [], edits: new Map() };
   const allowedById = new Map(eligibleGroups.flatMap((group) => group.versionIds.map((id) => [id, group.eventKey])));
   const grouped = groupOutput.parse((await callWithRepair({ complete: completeWithinLimit, stage: 'group',
     digestId: input.digestId, generation: input.generation, deadlineAt: input.deadlineAt,
@@ -229,8 +231,8 @@ export async function runEditorialModel(input: {
       return sum + (value === undefined ? 0 : scoreEvent(value));
     }, 0) / group.versionIds.length;
     return average(right) - average(left) || left.eventKey.localeCompare(right.eventKey);
-  }).slice(0, input.maxEvents);
-  if (selectedGroups.length === 0) return { keptIds, scoresById, groups: [], edits: new Map() };
+  }).slice(0, Math.min(20, input.maxDeepRead));
+  if (selectedGroups.length === 0) return { filterDecisions: filterResults, keptIds, scoresById, groups: [], edits: new Map() };
   const drafts = selectedGroups.map((group) => {
     const versions = group.versionIds.map((id) => input.versions.find((version) => version.id === id)!).filter(Boolean);
     return { eventKey: group.eventKey, organization: group.organization, product: group.product,
@@ -240,14 +242,25 @@ export async function runEditorialModel(input: {
           ?? [...articleText(version).normalize('NFKC').replace(/\s+/g, ' ').trim()].slice(0, 240).join(''),
         evidenceSnippets: evidenceSnippets(version) })) };
   });
-  const edited = editOutput.parse((await callWithRepair({ complete: completeWithinLimit, stage: 'edit',
-    digestId: input.digestId, generation: input.generation, deadlineAt: input.deadlineAt,
-    maxOutputTokens: input.maxOutputTokens, promptVersion: input.promptVersion, payload: {
-      events: drafts,
-      targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
-    },
-    batchIndex: 0, maxRepairAttempts: input.maxRepairAttempts })).value);
-  assertExactIds(edited.cards.map((card) => card.eventKey), selectedGroups.map((group) => group.eventKey), 'EDIT_IDS_INVALID');
+  const editedCards: z.infer<typeof editOutput>['cards'] = [];
+  for (let offset = 0; offset < drafts.length; offset += 10) {
+    if ((callsByStage.get('edit') ?? 0) >= input.maxAttemptsPerStage) break;
+    const batch = drafts.slice(offset, offset + 10);
+    try {
+      const edited = editOutput.parse((await callWithRepair({ complete: completeWithinLimit, stage: 'edit',
+        digestId: input.digestId, generation: input.generation, deadlineAt: input.deadlineAt,
+        maxOutputTokens: input.maxOutputTokens, promptVersion: input.promptVersion, payload: {
+          events: batch,
+          targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
+        },
+        batchIndex: offset / 10, maxRepairAttempts: input.maxRepairAttempts })).value);
+      assertExactIds(edited.cards.map((card) => card.eventKey), batch.map((draft) => draft.eventKey), 'EDIT_IDS_INVALID');
+      editedCards.push(...edited.cards);
+    } catch (error) {
+      if (editedCards.length === 0) throw error;
+      break; // A failed reserve batch must not discard already produced cards.
+    }
+  }
   const edits = new Map<string, { title: string; summary: string; whyItMatters: string; suggestedAction: string | null; facts: Fact[] }>();
   const acceptCards = (cards: z.infer<typeof editOutput>['cards']) => { for (const card of cards) {
     if (edits.has(card.eventKey)) continue;
@@ -272,8 +285,8 @@ export async function runEditorialModel(input: {
           === fact.text.normalize('NFKC').replace(/\s+/g, ' ').trim()))) continue;
     edits.set(card.eventKey, { ...card, facts });
   } };
-  acceptCards(edited.cards);
-  const rejected = drafts.filter(draft => !edits.has(draft.eventKey));
+  acceptCards(editedCards);
+  const rejected = drafts.filter(draft => !edits.has(draft.eventKey)).slice(0, 10);
   if (rejected.length > 0 && input.maxRepairAttempts > 0
     && (callsByStage.get('edit') ?? 0) < input.maxAttemptsPerStage) {
     try {
@@ -283,11 +296,11 @@ export async function runEditorialModel(input: {
           targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
           validationErrors: ['Previous cards failed literal quote, supported-number, or safe-text validation.'],
           instruction: 'Rewrite only these events. Copy a complete provided evidenceSnippet verbatim into both facts.text and evidence.quote. Keep numbers, units, and month names exactly as written in evidence; do not convert billion to 亿, million to 万, or October to 10. Remove unsupported numbers and facts instead of guessing. No URLs or HTML.',
-        }, 1)).value);
+        }, 2)).value);
       const rejectedKeys = new Set(rejected.map(draft => draft.eventKey));
       acceptCards(corrected.cards.filter(card => rejectedKeys.has(card.eventKey)));
     } catch { /* Keep already validated cards; uncorrected drafts remain unpublished. */ }
   }
   if (edits.size === 0) throw new Error('EDIT_EVIDENCE_INVALID');
-  return { keptIds, scoresById, groups: selectedGroups.filter((group) => edits.has(group.eventKey)), edits };
+  return { filterDecisions: filterResults, keptIds, scoresById, groups: selectedGroups.filter((group) => edits.has(group.eventKey)), edits };
 }

@@ -83,23 +83,38 @@ export class DigestRepository {
     if (digest.build_generation !== generation) throw new Error('GENERATION_LOST');
     let maxCandidates = 0;
     let lateHours = 72;
+    let catchupDays = 0;
+    let historyDays = 30;
     let enabledSourceIds: string[] = [];
     let coreSourceIds: string[] = [];
     try {
       const snapshot = parseDigestConfigSnapshot(digest.config_snapshot_json);
       maxCandidates = snapshot.app.limits.maxCandidates;
       lateHours = snapshot.app.editorial.lateHours;
+      catchupDays = snapshot.app.editorial.catchupDays ?? 0;
+      historyDays = snapshot.app.editorial.historyDays;
       enabledSourceIds = snapshot.sources.filter((source) => source.enabled).map((source) => source.id);
       coreSourceIds = snapshot.sources.filter((source) => source.enabled && source.core).map((source) => source.id);
     } catch { /* Invalid legacy snapshots fail closed instead of inheriting live source authority. */ }
-    const lateCutoffAt = digest.cutoff_at - lateHours * 3_600_000;
+    const lateCutoffAt = digest.cutoff_at - Math.max(lateHours, catchupDays * 24) * 3_600_000;
+    const catchupCutoffAt = catchupDays === 0 ? null : digest.cutoff_at - catchupDays * 86_400_000;
     const enabledSourcesJson = JSON.stringify(enabledSourceIds);
     const coreSourcesJson = JSON.stringify(coreSourceIds);
 
     await this.db.batch([
       this.db.prepare(`
         INSERT INTO digest_candidates(digest_id,item_id,item_version_id,ordinal,reason)
-        WITH eligible AS (
+        WITH sent_versions AS (
+          SELECT sent.item_id,sent.canonical_url,sent.title,sent.body_text,sent.quality
+          FROM digests previous
+          JOIN deliveries delivery ON delivery.digest_id=previous.id AND delivery.status IN ('sent','uncertain')
+          JOIN digest_events event ON event.digest_id=previous.id
+          JOIN json_each(event.snapshot_json,'$.card.sourceVersionIds') reference
+          JOIN item_versions sent ON sent.id=reference.value
+          WHERE previous.mode='scheduled' AND previous.report_kind='daily'
+            AND previous.profile_id=(SELECT profile_id FROM digests WHERE id=?1)
+            AND previous.cutoff_at>=?7 AND previous.cutoff_at<(SELECT cutoff_at FROM digests WHERE id=?1)
+        ), eligible AS (
           SELECT v.*,i.source_id,i.first_seen_at,d.window_start_at,d.cutoff_at,
             ROW_NUMBER() OVER (PARTITION BY v.item_id ORDER BY v.revision DESC) AS latest_rank
           FROM digests d
@@ -109,7 +124,8 @@ export class DigestRepository {
           JOIN collection_pages p ON p.run_id=v.collection_run_id AND p.page_no=v.collection_page_no
             AND p.status='committed' AND p.committed_at<=d.cutoff_at
           WHERE d.id=?1 AND d.build_generation=?2 AND d.frozen_at IS NULL
-            AND (v.ingested_at>d.window_start_at OR p.committed_at>d.window_start_at)
+            AND (v.ingested_at>d.window_start_at OR p.committed_at>d.window_start_at
+              OR (?6 IS NOT NULL AND v.published_at>=?6))
             AND v.published_at>=?4 AND v.published_at<=d.cutoff_at
             AND v.quality<>'metadata_only'
             AND (v.revision=1 OR EXISTS (
@@ -120,6 +136,9 @@ export class DigestRepository {
         ), source_ranked AS (
           SELECT *,ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY published_at DESC,ingested_at DESC,id) AS source_rank
           FROM eligible WHERE latest_rank=1
+            AND NOT EXISTS (SELECT 1 FROM sent_versions sent
+              WHERE (sent.item_id=eligible.item_id OR sent.canonical_url=eligible.canonical_url)
+                AND sent.title=eligible.title AND sent.body_text=eligible.body_text AND sent.quality=eligible.quality)
         ), ranked AS (
           SELECT *,ROW_NUMBER() OVER (ORDER BY source_rank,published_at DESC,ingested_at DESC,id) AS ordinal
           FROM source_ranked ORDER BY source_rank,published_at DESC,ingested_at DESC,id LIMIT ?3
@@ -131,7 +150,8 @@ export class DigestRepository {
             ELSE 'new'
           END
         FROM ranked
-      `).bind(digestId, generation, maxCandidates, lateCutoffAt, enabledSourcesJson),
+      `).bind(digestId, generation, maxCandidates, lateCutoffAt, enabledSourcesJson,
+        catchupCutoffAt, digest.cutoff_at - historyDays * 86_400_000),
       this.db.prepare(`
         UPDATE digests SET frozen_at=CAST(unixepoch('subsec')*1000 AS INTEGER),
           coverage_json=json_object(

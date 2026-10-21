@@ -33,6 +33,34 @@ describe('HTMLRewriter extraction', () => {
     expect(page.items[0]).toMatchObject({ title: 'Model Release', publishedAt: Date.parse('2026-10-15T09:00:00Z'), quality: 'full' });
   });
 
+  it('reads an explicit text-only publication date used by MiniMax without inventing a year', async () => {
+    const dated = await extractHtml(new Response('<article><h1>Model</h1><time>2026-10-19</time><p>Model release.</p></article>', { headers: { 'content-type': 'text/html' } }),
+      { ...source, html: { listLinkSelector: 'a', articleSelector: 'article', dateSelector: 'article time' } });
+    expect(dated.publishedAt).toBe(Date.parse('2026-10-19T00:00:00Z'));
+    const undated = await extractHtml(new Response('<article><time>October 19</time><p>Model release.</p></article>', { headers: { 'content-type': 'text/html' } }),
+      { ...source, html: { listLinkSelector: 'a', articleSelector: 'article', dateSelector: 'article time' } });
+    expect(undated.publishedAt).toBeUndefined();
+  });
+
+  it('continues partial-body recovery on RSS 304 and preserves existing evidence on failure', async () => {
+    const rss: SourceConfig = { ...source, kind: 'rss', url: 'https://example.com/feed' };
+    const retry = { itemId: 'item', versionId: 'version', externalKey: 'key', canonicalUrl: 'https://example.com/article',
+      title: 'Official release', publishedAt: Date.now() - 1000, sourceUpdatedAt: null, attempts: 1,
+      body: 'Official summary with useful evidence.', quality: 'partial' as const };
+    for (const recovered of [false, true]) {
+      const fetcher = vi.fn(async (request: RequestInfo | URL) => String(request) === rss.url
+        ? new Response(null, { status: 304 })
+        : recovered ? new Response('<main><article><p>Complete official release details.</p></article></main>', { headers: { 'content-type': 'text/html' } })
+          : new Response('blocked', { status: 403 }));
+      const page = await createCollector('rss', { fetcher }).fetchPage({ source: rss, cursor: null,
+        deadlineAt: Date.now() + 10_000, signal: new AbortController().signal, bodyBudget: 1, bodyRetryCandidates: [retry] });
+      expect(page.items[0]).toMatchObject({ externalKey: 'key', quality: recovered ? 'full' : 'partial',
+        body: recovered ? 'Complete official release details.' : retry.body, metadata: { extractionAttempts: 2 } });
+      expect(page.bodyFetches).toBe(1);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it('preserves archive label dates so historical announcements do not become fresh publications', async () => {
     const fetcher = vi.fn(async (request: RequestInfo | URL) => new Response(String(request) === source.url
       ? '<main><a href="/old">Release 2026/09/10</a><a href="/invalid">Release 2026/02/31</a></main>'

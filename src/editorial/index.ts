@@ -68,6 +68,7 @@ export async function buildDigest(digestId: string, generation: number, dependen
         maxOutputTokens: appConfig.llm.maxOutputTokens, promptVersion: appConfig.llm.promptVersion,
         maxCharsPerArticle: appConfig.limits.maxModelCharsPerArticle, versions,
         maxDeepRead: appConfig.limits.maxDeepRead, maxEvents: appConfig.limits.maxEvents,
+        threshold: appConfig.editorial.threshold,
         targetMinChars: appConfig.editorial.targetMinChars,
         targetMaxChars: appConfig.editorial.targetMaxChars,
         maxAttemptsPerStage: appConfig.limits.maxAttemptsPerStage,
@@ -156,16 +157,31 @@ export async function buildDigest(digestId: string, generation: number, dependen
   } catch { /* Invalid legacy coverage snapshots degrade to unknown coverage. */ }
   const coverageFailed = coreTotal === 0 || coreFailed > 0;
   const insufficientContent = rows.results.length > 0 && versions.length === 0;
-  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed;
+  const awaitingBody = model?.filterDecisions.some(entry => entry.decision === 'needs_body') ?? false;
+  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed && !awaitingBody;
   const content: DigestContent = {
     digestId, localDate: digest.local_date, cutoffAt: digest.cutoff_at, windowStartAt: digest.window_start_at,
     cards: selected,
     coverageNote: coverageFailed ? '采集异常，今日无法可靠判断。'
       : insufficientContent ? '已发现条目，但正文证据不足，暂不生成新闻摘要。'
-        : editorialFailed ? '模型编辑未完成，本次仅保留来源标题供核验。' : null,
+        : editorialFailed ? '模型编辑未完成，本次仅保留来源标题供核验。'
+          : awaitingBody ? '部分候选正文证据不足，暂未收录；本期仅发布已核验内容。' : null,
     degradedReason: coverageFailed ? 'core_sources_failed' : insufficientContent ? 'insufficient_content'
       : editorialFailed ? 'editorial_model_failed' : null,
     noImportantUpdates,
+    ...(model === null ? {} : { editorialAudit: versions.map(version => {
+      const result = model.filterDecisions.find(entry => entry.itemVersionId === version.id);
+      const score = result === undefined ? null : scoreEvent(result.scores);
+      const outcome = selected.some(card => card.sourceVersionIds.includes(version.id)) ? 'selected'
+        : result === undefined ? 'filter_limit'
+          : result.decision !== 'keep' ? result.decision
+            : score! < (appConfig?.editorial.threshold ?? 60) ? 'below_threshold'
+              : !model.keptIds.has(version.id) ? 'deep_read_limit'
+                : !model.groups.some(group => group.versionIds.includes(version.id)) ? 'edit_or_evidence_rejected'
+                  : !cards.some(card => card.sourceVersionIds.includes(version.id)) ? 'history_or_evidence_rejected'
+                    : 'final_selection_limit';
+      return { itemVersionId: version.id, title: version.title, score, outcome };
+    }) }),
     sourceCoverage: (snapshot.sources ?? []).filter(source => source.enabled).map(source => ({
       sourceId: source.id, name: source.name,
       candidates: rows.results.filter(row => row.source_id === source.id).length,

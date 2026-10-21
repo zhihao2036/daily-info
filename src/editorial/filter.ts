@@ -15,6 +15,8 @@ export function scoreEvent(scores: EventCard['scores']): number {
 }
 
 export function selectEvents(cards: EventCard[], threshold = 60, limit = 10, sourceByVersion?: ReadonlyMap<string, string>): EventCard[] {
+  const boundedLimit = Math.max(0, Math.min(10, Math.trunc(limit)));
+  if (boundedLimit === 0) return [];
   const ranked = [...cards]
     .filter((card) => card.score >= threshold)
     .sort((left, right) => right.score - left.score
@@ -24,15 +26,22 @@ export function selectEvents(cards: EventCard[], threshold = 60, limit = 10, sou
   const selected: EventCard[] = [];
   const organizations = new Map<string, number>();
   const sources = new Map<string, number>();
-  for (const card of ranked) {
+  while (ranked.length > 0 && selected.length < boundedLimit) {
+    // Prefer varied reporting when scores are close, without dropping a third
+    // important event just because the same outlet reported it.
+    const sourceIds = (card: EventCard) => new Set(card.sourceVersionIds
+      .map(id => sourceByVersion?.get(id)).filter((id): id is string => id !== undefined));
+    const adjustedScore = (card: EventCard) => card.score
+      - ([...sourceIds(card)].some(source => (sources.get(source) ?? 0) >= 2) ? 5 : 0);
+    ranked.sort((left, right) => adjustedScore(right) - adjustedScore(left)
+      || right.score - left.score || left.eventId.localeCompare(right.eventId));
+    const card = ranked.shift()!;
     const organization = card.organization.normalize('NFKC').toLowerCase();
     if ((organizations.get(organization) ?? 0) >= 2) continue;
     const cardSources = new Set(card.sourceVersionIds.map((id) => sourceByVersion?.get(id)).filter((id): id is string => id !== undefined));
-    if ([...cardSources].some((source) => (sources.get(source) ?? 0) >= 2)) continue;
     selected.push(card);
     organizations.set(organization, (organizations.get(organization) ?? 0) + 1);
     for (const source of cardSources) sources.set(source, (sources.get(source) ?? 0) + 1);
-    if (selected.length >= Math.max(0, Math.min(10, limit))) break;
   }
-  return selected;
+  return selected.sort((left, right) => right.score - left.score || left.eventId.localeCompare(right.eventId));
 }

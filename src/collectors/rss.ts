@@ -195,14 +195,14 @@ export class RssCollector implements Collector {
       }
       throw error;
     }
-    if (response.status === 304) return { items: [], nextCursor: null, complete: true };
+    if (response.status === 304 && !input.bodyRetryCandidates?.length) return { items: [], nextCursor: null, complete: true };
     const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
     if (contentType.includes('text/html')) throw new Error('FEED_CONTENT_TYPE_INVALID');
     const etag = response.headers.get('etag');
     const lastModified = response.headers.get('last-modified');
     const pageSize = Math.max(1, Math.min(30, Math.trunc(input.pageSize ?? 30)));
     const maxBodyBytes = Math.max(1, Math.min(128 * 1024, Math.trunc(input.maxBodyBytes ?? 128 * 1024)));
-    const feedItems = normalizeFeed(await response.text(), input.source, { pageSize, maxBodyBytes });
+    const feedItems = response.status === 304 ? [] : normalizeFeed(await response.text(), input.source, { pageSize, maxBodyBytes });
     const items: RawItem[] = [];
     let bodyFetches = 0;
     const budget = Math.max(0, Math.min(20, Math.trunc(input.bodyBudget ?? 20)));
@@ -212,8 +212,8 @@ export class RssCollector implements Collector {
       retryKeys.add(retry.externalKey);
       retryKeys.add(retry.canonicalUrl);
       bodyFetches += 1;
-      let body = '';
-      let quality: RawItem['quality'] = 'metadata_only';
+      let body = retry.body ?? '';
+      let quality: RawItem['quality'] = retry.quality ?? 'metadata_only';
       let nextBodyRetryAt: number | null = null;
       try {
         await input.beforeRequest?.();
@@ -224,9 +224,11 @@ export class RssCollector implements Collector {
         });
         const extracted = await extractHtml(article, { ...input.source,
           html: input.source.html ?? { listLinkSelector: 'a', articleSelector: 'article,main' } }, maxBodyBytes);
-        body = extracted.text;
-        quality = extracted.quality;
-        if (quality === 'metadata_only') nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
+        if (extracted.quality === 'full' || (extracted.quality === 'partial' && quality === 'metadata_only')) {
+          body = extracted.text;
+          quality = extracted.quality;
+        }
+        if (quality !== 'full') nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
       } catch {
         nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
       }

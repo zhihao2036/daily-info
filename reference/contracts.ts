@@ -32,7 +32,7 @@ export interface AppConfig {
     maxDeepRead: number; maxEvents: number; perInstanceConcurrency: number;
     maxAttemptsPerStage: number; maxRepairAttempts: number;
   };
-  editorial: { targetMinChars: number; targetMaxChars: number; historyDays: number; lateHours: number; initialHours: number; threshold: number };
+  editorial: { targetMinChars: number; targetMaxChars: number; historyDays: number; lateHours: number; initialHours: number; catchupDays?: number; threshold: number };
   llm: {
     baseUrl: string; model: string; promptVersion: string;
     jsonMode: 'json_schema' | 'json_object' | 'none';

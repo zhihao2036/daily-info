@@ -96,8 +96,8 @@ export class HtmlListCollector implements Collector {
       retryKeys.add(retry.externalKey);
       retryKeys.add(retry.canonicalUrl);
       bodyFetches += 1;
-      let body = '';
-      let quality: RawItem['quality'] = 'metadata_only';
+      let body = retry.body ?? '';
+      let quality: RawItem['quality'] = retry.quality ?? 'metadata_only';
       let nextBodyRetryAt: number | null = null;
       try {
         await input.beforeRequest?.();
@@ -107,9 +107,11 @@ export class HtmlListCollector implements Collector {
           maxBytes: input.maxResponseBytes ?? 2 * 1024 * 1024,
         });
         const extracted = await extractHtml(article, input.source, maxBodyBytes);
-        body = extracted.text;
-        quality = extracted.quality;
-        if (quality === 'metadata_only') nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
+        if (extracted.quality === 'full' || (extracted.quality === 'partial' && quality === 'metadata_only')) {
+          body = extracted.text;
+          quality = extracted.quality;
+        }
+        if (quality !== 'full') nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
       } catch {
         nextBodyRetryAt = Date.now() + 3_600_000 * (retry.attempts + 1);
       }

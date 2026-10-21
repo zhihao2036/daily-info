@@ -53,7 +53,7 @@ pnpm preview
 
 先对选定的官方订阅源或公开页面做少量、受控的 Workers 环境探测，确认目标 URL、允许主机、实际正文容器、日期和响应大小。不要绕过 401/403/429、登录、验证码或数据服务访问要求。探测成功后在个人配置中将该来源的 `verification` 设为 `worker_verified`、`enabled` 设为 true；首次用一个非核心来源验证，不要一次把所有候选都打开。
 
-`SOURCES_CONFIG.defaults` 可共享操作字段；URL、ID、主机列表和选择器必须逐源声明。展开后的完整配置仍逐项验证，原始绑定 JSON 不得超过 5120 字节。`pnpm doctor -- --config wrangler.production.jsonc --check-sources` 只检查 HTTP 状态，不代替正文和日期验收。
+`SOURCES_CONFIG.defaults` 可共享操作字段；URL、ID、主机列表和选择器逐源声明，或通过经过校验的 `preset` 展开。展开后的完整配置仍逐项验证，原始绑定 JSON 不得超过 5120 字节。`pnpm doctor -- --config wrangler.production.jsonc --check-sources` 只检查 HTTP 状态，不代替正文和日期验收。
 
 要启用模型，在个人 `APP_CONFIG.llm` 填写自己核实过的 HTTPS baseUrl、模型名称、JSON 能力、maxOutputTokens、tokenizer，以及覆盖所有计费 token 的输入/输出费率；将 `pricingIncludesAllBillableTokens` 设为 true。费率单位为 microUSD / 百万 token；预算单位为 microUSD，1 USD = 1,000,000 microUSD。自己设定非零日/月预算，维持日预算不大于月预算。示例费率为空、预算为零，不能照抄为已计费验证。
 

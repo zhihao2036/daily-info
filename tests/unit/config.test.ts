@@ -5,6 +5,17 @@ import { assertDeliveryConfiguration, parseSendEnabled, validateAdminToken, vali
 import { validateSourcesConfig } from '../../src/config/schema';
 
 describe('configuration validation', () => {
+  it('expands opt-in official presets without bypassing verification or host validation', () => {
+    const registry = { schemaVersion: 1, sources: [{ preset: 'minimax-blog' }, { preset: 'cursor-changelog' }] };
+    expect(validateSourcesConfig(registry).sources.map(source => [source.id, source.enabled]))
+      .toEqual([['minimax-blog', false], ['cursor-changelog', false]]);
+    expect(() => validateSourcesConfig({ ...registry, sources: [{ preset: 'missing' }] })).toThrow('SOURCE_PRESET');
+    expect(() => validateSourcesConfig({ ...registry, sources: [{ preset: 'minimax-blog', enabled: true }] })).toThrow();
+    expect(() => validateSourcesConfig({ ...registry, sources: [{ preset: 'minimax-blog', url: 'https://attacker.test/' }] })).toThrow();
+    expect(validateSourcesConfig({ ...registry, sources: [{ preset: 'minimax-blog', enabled: true, verification: 'worker_verified' }] }).sources[0]?.enabled).toBe(true);
+    expect(validateSourcesConfig({ ...registry, defaults: { kind: 'rss', enabled: true, verification: 'worker_verified' } }).sources
+      .map(source => source.kind)).toEqual(['html_list', 'html_list']);
+  });
   it('expands shared defaults but still validates each source and forbids shared host allowlists', () => {
     const source = structuredClone(sourcesExample.sources[0]!);
     const { enabled, verification, ...specific } = source;

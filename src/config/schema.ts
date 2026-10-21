@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AppConfig, SourceConfig } from '../domain/contracts';
+import { SOURCE_PRESETS } from './source-presets.ts';
 
 const httpsUrl = z.string().url().superRefine((raw, context) => {
   const url = new URL(raw);
@@ -55,6 +56,7 @@ export const appConfigSchema = z.strictObject({
     historyDays: positiveSafeInteger,
     lateHours: positiveSafeInteger,
     initialHours: positiveSafeInteger,
+    catchupDays: positiveSafeInteger.max(14).optional(),
     threshold: z.number().min(0).max(100),
   }),
   llm: z.strictObject({
@@ -164,7 +166,11 @@ export function validateSourcesConfig(input: unknown): { schemaVersion: 1; sourc
     sources: z.array(z.record(z.string(), z.unknown())),
   }).parse(input);
   return sourcesConfigSchema.parse({ schemaVersion: registry.schemaVersion,
-    sources: registry.sources.map(source => ({ ...registry.defaults, ...source })) }) as { schemaVersion: 1; sources: SourceConfig[] };
+    sources: registry.sources.map(({ preset, ...source }) => {
+      if (preset === undefined) return { ...registry.defaults, ...source };
+      if (typeof preset !== 'string' || !Object.hasOwn(SOURCE_PRESETS, preset)) throw new Error('CONFIG_INVALID:SOURCE_PRESET');
+      return { ...SOURCE_PRESETS[preset], ...registry.defaults, kind: SOURCE_PRESETS[preset]!.kind, ...source };
+    }) }) as { schemaVersion: 1; sources: SourceConfig[] };
 }
 
 export function parseAppConfig(input: unknown): AppConfig {
