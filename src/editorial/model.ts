@@ -101,7 +101,7 @@ async function callStage(
   const requestStage = repair ? 'repair' : ownerStage;
   return complete({
     request: { stage: requestStage, digestId, input: {
-      system: PROMPTS[requestStage].system,
+      system: repair ? `${PROMPTS[ownerStage].system}\n\n${PROMPTS.repair.system}` : PROMPTS[ownerStage].system,
       outputSchema: stageSchemas[ownerStage],
       payload: repair ? { task: payload, instruction: 'Return a corrected response matching outputSchema exactly.' } : payload,
     } as never, maxOutputTokens },
@@ -247,25 +247,6 @@ export async function runEditorialModel(input: {
           ?? [...articleText(version).normalize('NFKC').replace(/\s+/g, ' ').trim()].slice(0, 240).join(''),
         evidenceSnippets: evidenceSnippets(version) })) };
   });
-  const editedCards: z.infer<typeof editOutput>['cards'] = [];
-  for (let offset = 0; offset < drafts.length; offset += 10) {
-    if ((callsByStage.get('edit') ?? 0) >= input.maxAttemptsPerStage) break;
-    const batch = drafts.slice(offset, offset + 10);
-    try {
-      const edited = editOutput.parse((await callWithRepair({ complete: completeWithinLimit, stage: 'edit',
-        digestId: input.digestId, generation: input.generation, deadlineAt: input.deadlineAt,
-        maxOutputTokens: input.maxOutputTokens, promptVersion: input.promptVersion, payload: {
-          events: batch,
-          targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
-        },
-        batchIndex: offset / 10, maxRepairAttempts: input.maxRepairAttempts })).value);
-      assertExactIds(edited.cards.map((card) => card.eventKey), batch.map((draft) => draft.eventKey), 'EDIT_IDS_INVALID');
-      editedCards.push(...edited.cards);
-    } catch (error) {
-      if (editedCards.length === 0) throw error;
-      break; // A failed reserve batch must not discard already produced cards.
-    }
-  }
   const edits = new Map<string, { title: string; summary: string; whyItMatters: string; suggestedAction: string | null; facts: Fact[] }>();
   const acceptCards = (cards: z.infer<typeof editOutput>['cards']) => { for (const card of cards) {
     if (edits.has(card.eventKey)) continue;
@@ -290,7 +271,28 @@ export async function runEditorialModel(input: {
           === fact.text.normalize('NFKC').replace(/\s+/g, ' ').trim()))) continue;
     edits.set(card.eventKey, { ...card, facts });
   } };
-  acceptCards(editedCards);
+  for (let offset = 0; offset < drafts.length; offset += 10) {
+    if ((callsByStage.get('edit') ?? 0) >= input.maxAttemptsPerStage) break;
+    const batch = drafts.slice(offset, offset + 10);
+    try {
+      const edited = editOutput.parse((await callWithRepair({ complete: completeWithinLimit, stage: 'edit',
+        digestId: input.digestId, generation: input.generation, deadlineAt: input.deadlineAt,
+        maxOutputTokens: input.maxOutputTokens, promptVersion: input.promptVersion, payload: {
+          events: batch,
+          targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
+        },
+        batchIndex: offset / 10, maxRepairAttempts: input.maxRepairAttempts })).value);
+      assertExactIds(edited.cards.map((card) => card.eventKey), batch.map((draft) => draft.eventKey), 'EDIT_IDS_INVALID');
+      acceptCards(edited.cards);
+      // Reserve the last call for failed high-priority cards before editing reserves.
+      if (batch.some(draft => !edits.has(draft.eventKey))
+        && input.maxRepairAttempts > 0
+        && (callsByStage.get('edit') ?? 0) >= input.maxAttemptsPerStage - 1) break;
+    } catch (error) {
+      if (offset === 0) throw error;
+      break; // A failed reserve batch must not discard already produced cards.
+    }
+  }
   const rejected = drafts.filter(draft => !edits.has(draft.eventKey)).slice(0, 10);
   if (rejected.length > 0 && input.maxRepairAttempts > 0
     && (callsByStage.get('edit') ?? 0) < input.maxAttemptsPerStage) {

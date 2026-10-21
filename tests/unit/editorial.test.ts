@@ -6,12 +6,39 @@ import { renderDigest } from '../../src/editorial/render';
 import { validateEvidence } from '../../src/editorial/validate';
 import { runEditorialModel, validateEditorialResponse } from '../../src/editorial/model';
 import { articleText, evidenceSnippets } from '../../src/editorial/evidence';
+import { EDIT_SYSTEM_PROMPT } from '../../src/prompts';
 
 function version(id: string, body: string): ItemVersion {
   return { id, itemId: `item-${id}`, sourceId: 'source', revision: 1, title: 'Widget 2.0', canonicalUrl: `https://example.com/${id}`, publishedAt: null, ingestedAt: 1, bodyText: body, quality: 'full', contentHash: id };
 }
 
 describe('editorial invariants', () => {
+  it('retains editorial rules during schema repair and repairs priority cards before spending the final call on reserves', async () => {
+    const items = Array.from({ length: 16 }, (_, i) => version(`v${String(i).padStart(2, '0')}`, 'The product now supports private conversations.'));
+    const stages: string[] = [];
+    const result = await runEditorialModel({ digestId: 'repair-priority', generation: 0, deadlineAt: Date.now() + 60_000,
+      maxOutputTokens: 2000, promptVersion: 'v2', maxCharsPerArticle: 1000, maxDeepRead: 20, maxEvents: 10,
+      maxAttemptsPerStage: 3, maxRepairAttempts: 1, versions: items,
+      deterministicGroups: items.map(item => ({ eventKey: item.id, organization: item.id, product: 'Product', productVersion: '', changeKind: 'release', versionIds: [item.id] })),
+      complete: async call => {
+        stages.push(call.request.stage);
+        if (call.ownerStage === 'filter') return { value: { results: items.map(item => ({ itemVersionId: item.id, decision: 'keep', scores: {
+          relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 } })) }, usage: null, providerRequestId: null };
+        if (call.ownerStage === 'group') return { value: { groups: items.map(item => ({ eventKey: item.id, memberIds: [item.id], confidence: 0.99 })) }, usage: null, providerRequestId: null };
+        if (stages.length === 3) throw new Error('RESPONSE_INVALID');
+        const input = call.request.input as { system: string; payload: { events?: Array<{ eventKey: string }>; task?: { events: Array<{ eventKey: string }> }; validationErrors?: string[] } };
+        expect(input.system).toContain(EDIT_SYSTEM_PROMPT);
+        const batch = input.payload.task?.events ?? input.payload.events!;
+        expect(batch.map(event => event.eventKey)).toEqual(items.slice(0, 10).map(item => item.id));
+        const repairingEvidence = input.payload.validationErrors !== undefined;
+        return { value: { cards: batch.map(event => ({ eventKey: event.eventKey, title: '私密对话功能',
+          summary: repairingEvidence ? '产品支持私密对话。' : '产品支持 999 个私密对话。', whyItMatters: '可能改善隐私保护。', suggestedAction: null,
+          facts: [{ text: items[0]!.bodyText, evidence: [{ itemVersionId: event.eventKey, quote: items[0]!.bodyText }] }] })) }, usage: null, providerRequestId: null };
+      } });
+    expect(stages).toEqual(['filter', 'group', 'edit', 'repair', 'edit']);
+    expect(result.edits.size).toBe(10);
+    expect([...result.edits.values()].every(card => !card.summary.includes('999'))).toBe(true);
+  });
   it('retains valid decisions when a filter omits an ID and ignores foreign or duplicated IDs', async () => {
     const items = ['valid', 'missing', 'duplicate'].map(id => version(id, 'The product now supports private conversations.'));
     const score = { relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 };
