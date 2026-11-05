@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDigest } from '../../src/editorial';
-import { runEditorialModel } from '../../src/editorial/model';
+import { renderDigest } from '../../src/editorial/render';
+import { runEditorialModel, type EditorialComplete } from '../../src/editorial/model';
 import type { ItemVersion } from '../../src/domain/contracts';
 
 const tables = ['delivery_attempts', 'deliveries', 'digest_events', 'digest_candidates', 'event_versions', 'events', 'item_versions', 'collection_pages', 'items', 'runs', 'digests', 'sources'] as const;
@@ -24,6 +25,7 @@ async function seed(now: number): Promise<void> {
   await env.DB.prepare(`INSERT INTO digests(id,profile_id,local_date,timezone,mode,status,window_start_at,cutoff_at,build_deadline_at,send_at,send_deadline_at,frozen_at,build_generation,config_snapshot_json,coverage_json,created_at,updated_at)
     VALUES ('digest-today','personal','2026-09-21','Asia/Shanghai','scheduled','building',?1,?2,?3,?4,?5,?2,0,'{}','{"coreTotal":2,"coreFailed":0}',?6,?6)`)
     .bind(now - 172_800_000, now + 1000, now + 60_000, now + 120_000, now + 180_000, now).run();
+  await env.DB.prepare('UPDATE digests SET config_snapshot_json=?1').bind(JSON.stringify({ app: JSON.parse(env.APP_CONFIG as string), sources: [] })).run();
   await env.DB.batch([
     env.DB.prepare("INSERT INTO digest_candidates VALUES ('digest-today','item-official-a','version-official-a',1,'new')"),
     env.DB.prepare("INSERT INTO digest_candidates VALUES ('digest-today','item-official-b','version-official-b',2,'new')"),
@@ -36,13 +38,42 @@ function frozenSource(id: string) {
     intervalHours: 1, verification: 'worker_verified' as const, browserFallbackEnabled: false };
 }
 
+const completeFixture: EditorialComplete = async call => {
+  const payload = (call.request.input as { payload: any }).payload;
+  const value = call.ownerStage === 'filter' ? { results: payload.candidates.map((item: any) => ({
+    itemVersionId: item.itemVersionId, decision: 'keep', scores: { relevance: 90, impact: 80, evidence: 90, novelty: 85, actionability: 70 },
+  })) } : call.ownerStage === 'group' ? { groups: payload.groups.map((group: any) => ({
+    eventKey: group.eventKey, memberIds: group.versionIds, confidence: 0.99,
+  })) } : { cards: payload.events.map((event: any) => ({
+    eventKey: event.eventKey, title: 'Widget 更新', summary: '产品已正式发布。', whyItMatters: '可评估升级。', suggestedAction: null,
+    facts: [{ text: event.sources[0].evidenceSnippet, evidence: [{ itemVersionId: event.sources[0].itemVersionId, quote: event.sources[0].evidenceSnippet }] }],
+  })) };
+  return { value, usage: null, providerRequestId: null };
+};
+
 describe('editorial pipeline', () => {
   beforeEach(reset);
+
+  it.each(['failed', 'unavailable'])('publishes one incident message without title cards when editing is %s', async mode => {
+    const now = Date.parse('2026-09-21T00:00:00Z');
+    await seed(now);
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000,
+      ...(mode === 'failed' ? { complete: async () => { throw new Error('EDIT_IDS_INVALID'); } } : {}),
+    });
+    expect(content.cards).toEqual([]);
+    expect(content.noImportantUpdates).toBe(false);
+    expect(content.degradedReason).toBe(mode === 'failed' ? 'editorial_model_failed' : 'editorial_model_unavailable');
+    const messages = renderDigest(content).telegramMessages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain('暂未生成可发布的摘要');
+    expect(messages[0]).not.toContain('为什么值得关注');
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM digest_events').first<{ n: number }>())?.n).toBe(0);
+  });
 
   it('collapses two official sources for one event and commits an immutable cited snapshot', async () => {
     const now = Date.parse('2026-09-21T00:00:00Z');
     await seed(now);
-    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
     expect(content.cards).toHaveLength(1);
     expect(content.cards[0]?.sourceVersionIds).toEqual(['version-official-a', 'version-official-b']);
     const persisted = await env.DB.prepare('SELECT status,content_json,rendered_html FROM digests WHERE id=?1').bind('digest-today').first<{ status: string; content_json: string; rendered_html: string }>();
@@ -136,7 +167,7 @@ describe('editorial pipeline', () => {
     await seed(now);
     await env.DB.prepare(`UPDATE digests SET coverage_json=json('{"coreTotal":2,"coreFailed":2}') WHERE id='digest-today'`).run();
 
-    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
 
     expect(content.cards.length).toBeGreaterThan(0);
     expect(content.coverageNote).toContain('采集异常');
@@ -148,7 +179,7 @@ describe('editorial pipeline', () => {
     await seed(now);
     await env.DB.prepare(`UPDATE digests SET coverage_json=json('{"coreTotal":0,"coreFailed":0}') WHERE id='digest-today'`).run();
 
-    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
 
     expect(content.coverageNote).toContain('采集异常');
     expect(content.noImportantUpdates).toBe(false);
@@ -166,7 +197,7 @@ describe('editorial pipeline', () => {
       .bind(JSON.stringify({ eventKey: 'acme-widget-2-0-release' })).run();
     await env.DB.prepare(`INSERT INTO deliveries(id,digest_id,channel,destination_key,destination_config_ref,payload_json,payload_hash,status,created_at,updated_at)
       VALUES ('delivery-old','digest-yesterday','cloudflare_email','dest','ref','{}','hash','uncertain',?1,?1)`).bind(now).run();
-    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
     expect(content.cards).toEqual([]);
     expect(content.noImportantUpdates).toBe(true);
   });
@@ -190,7 +221,7 @@ describe('editorial pipeline', () => {
     await env.DB.prepare(`INSERT INTO deliveries(id,digest_id,channel,destination_key,destination_config_ref,payload_json,payload_hash,status,created_at,updated_at)
       VALUES ('history-delivery','digest-old','dummy','dest','ref','{}','hash','uncertain',?1,?1)`).bind(old).run();
 
-    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-today', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
 
     expect(content.cards).toHaveLength(1);
   });
@@ -202,7 +233,7 @@ describe('editorial pipeline', () => {
     await env.DB.prepare(`INSERT INTO digests(id,profile_id,local_date,timezone,mode,status,window_start_at,cutoff_at,build_deadline_at,send_at,send_deadline_at,frozen_at,build_generation,config_snapshot_json,coverage_json,created_at,updated_at)
       VALUES ('digest-incident','personal','2026-09-21','Asia/Shanghai','scheduled','building',?1,?2,?3,?4,?5,?2,0,'{}','{"coreTotal":1,"coreFailed":1}',?6,?6)`)
       .bind(now - 172_800_000, now + 1000, now + 60_000, now + 120_000, now + 180_000, now).run();
-    const content = await buildDigest('digest-incident', 0, { db: env.DB, now: () => now + 2000 });
+    const content = await buildDigest('digest-incident', 0, { db: env.DB, now: () => now + 2000, complete: completeFixture });
     expect(content.coverageNote).toContain('采集异常');
     expect(content.noImportantUpdates).toBe(false);
   });

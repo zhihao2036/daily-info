@@ -71,14 +71,15 @@ describe('end-to-end composition', () => {
       .first<{ status: string; content_json: string }>();
     const content = JSON.parse(digest!.content_json) as { cards: unknown[] };
     expect(digest?.status).toBe('ready');
-    expect(content.cards).toHaveLength(1);
+    expect(content.cards).toHaveLength(0);
     const response = await worker.fetch(new Request(`https://worker.test/api/digests/${first.id}`, {
       headers: { authorization: 'Bearer integration-admin-token-32-bytes!!' },
     }), env as unknown as Env);
     expect(response.status).toBe(200);
     const published = await response.json() as { renderedText: string; renderedHtml: string };
-    expect(published.renderedText).toContain('https://example.com/');
-    expect(published.renderedHtml).toContain('<a href="https://example.com/');
+    expect(published.renderedText).toContain('采集异常，今日无法可靠判断。');
+    expect(published.renderedText).not.toContain('为什么值得关注');
+    expect(published.renderedHtml).not.toContain('<article>');
     expect(await env.DB.prepare(`SELECT status,destination_config_ref,destination_key,last_error_code FROM deliveries WHERE digest_id=?1`)
       .bind(first.id).first()).toMatchObject({ status: 'suppressed', destination_config_ref: 'frozen-destination',
         destination_key: deliveryDestinationKey, last_error_code: 'CONFIG_CHANGED' });

@@ -250,7 +250,8 @@ export async function runEditorialModel(input: {
   const edits = new Map<string, { title: string; summary: string; whyItMatters: string; suggestedAction: string | null; facts: Fact[] }>();
   const acceptCards = (cards: z.infer<typeof editOutput>['cards']) => { for (const card of cards) {
     if (edits.has(card.eventKey)) continue;
-    const group = selectedGroups.find((candidate) => candidate.eventKey === card.eventKey)!;
+    const group = selectedGroups.find((candidate) => candidate.eventKey === card.eventKey);
+    if (group === undefined) continue;
     const versions = group.versionIds.map((id) => input.versions.find((version) => version.id === id)!).filter(Boolean);
     const facts = card.facts.map(fact => {
       const evidence = fact.evidence.map(reference => {
@@ -282,8 +283,9 @@ export async function runEditorialModel(input: {
           targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
         },
         batchIndex: offset / 10, maxRepairAttempts: input.maxRepairAttempts })).value);
-      assertExactIds(edited.cards.map((card) => card.eventKey), batch.map((draft) => draft.eventKey), 'EDIT_IDS_INVALID');
-      acceptCards(edited.cards);
+      // Missing cards are repaired below; foreign IDs cannot enter another batch.
+      const batchKeys = new Set(batch.map(draft => draft.eventKey));
+      acceptCards(edited.cards.filter(card => batchKeys.has(card.eventKey)));
       // Reserve the last call for failed high-priority cards before editing reserves.
       if (batch.some(draft => !edits.has(draft.eventKey))
         && input.maxRepairAttempts > 0
@@ -301,7 +303,7 @@ export async function runEditorialModel(input: {
         input.deadlineAt, input.maxOutputTokens, input.promptVersion, {
           events: rejected,
           targetChineseChars: { min: input.targetMinChars ?? 600, max: input.targetMaxChars ?? 1200 },
-          validationErrors: ['Previous cards failed literal quote, supported-number, or safe-text validation.'],
+          validationErrors: ['Previous cards were missing or failed literal quote, supported-number, or safe-text validation.'],
           instruction: 'Rewrite only these events. Copy a complete provided evidenceSnippet verbatim into both facts.text and evidence.quote. Keep numbers, units, and month names exactly as written in evidence; do not convert billion to 亿, million to 万, or October to 10. Remove unsupported numbers and facts instead of guessing. No URLs or HTML.',
         }, 2)).value);
       const rejectedKeys = new Set(rejected.map(draft => draft.eventKey));

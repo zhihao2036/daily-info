@@ -31,11 +31,6 @@ function asVersion(row: CandidateRow): ItemVersion {
   return { id: row.id, itemId: row.item_id, sourceId: row.source_id, revision: row.revision, title: row.title, canonicalUrl: row.canonical_url, publishedAt: row.published_at, ingestedAt: row.ingested_at, bodyText: row.body_text, quality: row.quality, contentHash: row.content_hash };
 }
 
-function quote(body: string): string {
-  const normalized = body.normalize('NFKC').replace(/\s+/g, ' ').trim();
-  return [...normalized].slice(0, 240).join('');
-}
-
 export async function buildDigest(digestId: string, generation: number, dependencies: BuildDigestDependencies): Promise<DigestContent> {
   const digest = await dependencies.db.prepare(`
     SELECT local_date,window_start_at,cutoff_at,build_deadline_at,build_generation,status,config_snapshot_json,coverage_json
@@ -80,7 +75,9 @@ export async function buildDigest(digestId: string, generation: number, dependen
       editorialFailed = true;
     }
   }
-  const groups = model?.groups ?? deterministicGroups;
+  // A failed or unavailable editor must never publish unscored title placeholders.
+  const editorialUnavailable = versions.length > 0 && model === null && !editorialFailed;
+  const groups = model?.groups ?? [];
   const history = await dependencies.db.prepare(`
     SELECT de.snapshot_json FROM digest_events de JOIN digests d ON d.id=de.digest_id
     JOIN deliveries delivery ON delivery.digest_id=d.id
@@ -101,13 +98,11 @@ export async function buildDigest(digestId: string, generation: number, dependen
     const primary = groupVersions[0];
     if (primary === undefined) continue;
     if (model !== null && !groupVersions.some((version) => model.keptIds.has(version.id))) continue;
-    const evidenceQuote = quote(primary.bodyText);
-    const fact = { text: evidenceQuote, evidence: [{ itemVersionId: primary.id, quote: evidenceQuote }] };
     const edit = model?.edits.get(group.eventKey);
     const modelFacts = edit?.facts ?? [];
     const hasVerifiedFact = model !== null && modelFacts.length > 0
       && modelFacts.every((candidate) => validateEvidence(candidate, groupVersions));
-    if (model !== null && !hasVerifiedFact) continue;
+    if (!hasVerifiedFact) continue;
     const metadataOnly = groupVersions.every((version) => version.quality === 'metadata_only');
     const modelScores = groupVersions.map((version) => model?.scoresById.get(version.id)).filter((value): value is EventCard['scores'] => value !== undefined);
     const scores = modelScores.length === 0
@@ -133,10 +128,9 @@ export async function buildDigest(digestId: string, generation: number, dependen
     const authorities = groupVersions.map((version) => frozenAuthorities.get(version.sourceId) ?? null);
     const card: EventCard = {
       eventId, eventVersionId, organization: group.organization, product: group.product,
-      productVersion: group.productVersion, changeKind: group.changeKind, title: hasVerifiedFact ? edit!.title : primary.title,
-      summary: hasVerifiedFact ? `${groupVersions.every((version) => version.quality === 'partial') ? '来源摘要（非全文）' : '模型摘要'}：${edit!.summary}`
-        : '仅根据冻结标题列出；模型编辑未启用或未通过校验。',
-      whyItMatters: hasVerifiedFact ? `模型判断：${edit!.whyItMatters}` : '请打开原始来源核验详情。',
+      productVersion: group.productVersion, changeKind: group.changeKind, title: edit!.title,
+      summary: `${groupVersions.every((version) => version.quality === 'partial') ? '来源摘要（非全文）' : '模型摘要'}：${edit!.summary}`,
+      whyItMatters: `模型判断：${edit!.whyItMatters}`,
       suggestedAction: hasVerifiedFact && edit!.suggestedAction !== null ? `建议：${edit!.suggestedAction}` : null,
       evidenceLabel: hasVerifiedFact && authorities.every((authority) => authority === 'official') ? 'official' : 'unverified',
       facts: hasVerifiedFact ? modelFacts : [], scores, score,
@@ -159,17 +153,18 @@ export async function buildDigest(digestId: string, generation: number, dependen
   const insufficientContent = rows.results.length > 0 && versions.length === 0;
   const awaitingBody = model?.filterDecisions.some(entry => entry.decision === 'needs_body') ?? false;
   const incompleteFilter = model !== null && model.filterDecisions.length < versions.length;
-  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed && !awaitingBody && !incompleteFilter;
+  const noImportantUpdates = selected.length === 0 && !coverageFailed && !insufficientContent && !editorialFailed && !editorialUnavailable && !awaitingBody && !incompleteFilter;
   const content: DigestContent = {
     digestId, localDate: digest.local_date, cutoffAt: digest.cutoff_at, windowStartAt: digest.window_start_at,
     cards: selected,
     coverageNote: coverageFailed ? '采集异常，今日无法可靠判断。'
       : insufficientContent ? '已发现条目，但正文证据不足，暂不生成新闻摘要。'
-        : editorialFailed ? '模型编辑未完成，本次仅保留来源标题供核验。'
+        : editorialFailed ? '本期新闻编辑失败，暂未生成可发布的摘要。'
+          : editorialUnavailable ? '本期新闻编辑未运行，暂未生成可发布的摘要。'
           : incompleteFilter ? '部分候选未完成筛选；本期仅发布已核验内容。'
             : awaitingBody ? '部分候选正文证据不足，暂未收录；本期仅发布已核验内容。' : null,
     degradedReason: coverageFailed ? 'core_sources_failed' : insufficientContent ? 'insufficient_content'
-      : editorialFailed ? 'editorial_model_failed' : null,
+      : editorialFailed ? 'editorial_model_failed' : editorialUnavailable ? 'editorial_model_unavailable' : null,
     noImportantUpdates,
     ...(model === null ? {} : { editorialAudit: versions.map(version => {
       const result = model.filterDecisions.find(entry => entry.itemVersionId === version.id);

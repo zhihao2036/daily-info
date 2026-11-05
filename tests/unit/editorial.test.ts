@@ -39,6 +39,27 @@ describe('editorial invariants', () => {
     expect(result.edits.size).toBe(10);
     expect([...result.edits.values()].every(card => !card.summary.includes('999'))).toBe(true);
   });
+  it.each([false, true])('keeps valid edits when cards are omitted and repairs only missing cards (repair fails: %s)', async (repairFails) => {
+    const items = ['a', 'b', 'c'].map(id => version(id, 'The product now supports private conversations.'));
+    const batches: string[][] = [];
+    const result = await runEditorialModel({ digestId: 'partial-edit', generation: 0, deadlineAt: Date.now() + 60_000,
+      maxOutputTokens: 1000, promptVersion: 'v2', maxCharsPerArticle: 1000, maxDeepRead: 20, maxEvents: 10,
+      maxAttemptsPerStage: 3, maxRepairAttempts: 1, versions: items,
+      deterministicGroups: items.map(item => ({ eventKey: item.id, organization: item.id, product: 'Product', productVersion: '', changeKind: 'release', versionIds: [item.id] })),
+      complete: async call => {
+        if (call.ownerStage === 'filter') return { value: { results: items.map(item => ({ itemVersionId: item.id, decision: 'keep', scores: {
+          relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 } })) }, usage: null, providerRequestId: null };
+        if (call.ownerStage === 'group') return { value: { groups: items.map(item => ({ eventKey: item.id, memberIds: [item.id], confidence: 0.99 })) }, usage: null, providerRequestId: null };
+        const payload = (call.request.input as { payload: { events: Array<{ eventKey: string }> } }).payload;
+        batches.push(payload.events.map(event => event.eventKey));
+        if (batches.length === 2 && repairFails) throw new Error('LLM_TIMEOUT');
+        const ids = batches.length === 1 ? ['a', 'a', 'foreign'] : batches[1]!;
+        return { value: { cards: ids.map(id => ({ eventKey: id, title: '私密对话功能', summary: '产品支持私密对话。', whyItMatters: '可能改善隐私保护。', suggestedAction: null,
+          facts: [{ text: items[0]!.bodyText, evidence: [{ itemVersionId: id, quote: items[0]!.bodyText }] }] })) }, usage: null, providerRequestId: null };
+      } });
+    expect(batches).toEqual([['a', 'b', 'c'], ['b', 'c']]);
+    expect([...result.edits.keys()]).toEqual(repairFails ? ['a'] : ['a', 'b', 'c']);
+  });
   it('retains valid decisions when a filter omits an ID and ignores foreign or duplicated IDs', async () => {
     const items = ['valid', 'missing', 'duplicate'].map(id => version(id, 'The product now supports private conversations.'));
     const score = { relevance: 85, impact: 75, evidence: 80, novelty: 80, actionability: 70 };
